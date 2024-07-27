@@ -1,7 +1,7 @@
 # Modern Annotator UI
 A YOLO annotator UI written in Python and QT6.
 
-![image](https://github.com/user-attachments/assets/b376ee39-d0b5-4f35-8956-8627ed0e24bd)
+![image](https://github.com/user-attachments/assets/f5b83608-f8ed-4cf9-9504-f8db2ae5449c)
 
 ## Installation
 Clone the repository:
