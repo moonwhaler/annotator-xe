@@ -22,4 +22,13 @@ Then pip install the requirements:
 
 To start just enter:
 
-`python pyQT5_YOLO.py`
+`python pyQT_YOLO.py`
+
+## Starting the app
+After installing, you may start the app by activating the virtual environment (as you did in the installation):
+
+`source venv/bin/activate`
+
+And then execute the .py file with:
+
+`python pyQT_YOLO.py`
