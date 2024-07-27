@@ -6,13 +6,43 @@ from ultralytics import YOLO
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QListWidget, QHBoxLayout, QWidget, QLabel,
                              QVBoxLayout, QToolBar, QStatusBar, QListView, QPushButton, QSplitter, QMessageBox,
                              QMenu, QInputDialog, QDialog, QScrollArea, QListWidgetItem, QAbstractItemView, QSlider,
-                             QTabWidget, QFormLayout, QLineEdit, QSpinBox, QCheckBox)
+                             QTabWidget, QFormLayout, QLineEdit, QSpinBox, QCheckBox, QDialogButtonBox, QComboBox)
 from PyQt6.QtGui import (QPixmap, QIcon, QPainter, QColor, QPen, QFont, QPainterPath, QPolygonF, QAction, QPalette,
                          QActionGroup, QCursor, QImageReader, QStandardItemModel, QStandardItem, QFontMetrics)
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, pyqtSignal, QPoint, QRect
+from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, pyqtSignal, QPoint, QRect, QFileInfo
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 
 def increase_image_allocation_limit():
     QImageReader.setAllocationLimit(0)  # 0 means no limit
+
+class ImageLoader(QThread):
+    image_loaded = pyqtSignal(str, QIcon)
+    finished = pyqtSignal()
+
+    def __init__(self, directory, file_list):
+        super().__init__()
+        self.directory = directory
+        self.file_list = file_list
+        self.is_running = True
+
+    def run(self):
+        for filename in self.file_list:
+            if not self.is_running:
+                break
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                file_path = os.path.join(self.directory, filename)
+                try:
+                    pixmap = QPixmap(file_path)
+                    if not pixmap.isNull():
+                        icon = pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                        self.image_loaded.emit(filename, QIcon(icon))
+                except Exception as e:
+                    print(f"Error loading image {file_path}: {str(e)}")
+            QApplication.processEvents()  # Allow GUI to remain responsive
+        self.finished.emit()
+
+    def stop(self):
+        self.is_running = False
 
 class Shape:
     def __init__(self, shape_type, points, label=''):
@@ -28,6 +58,7 @@ class Shape:
 
 class DrawingArea(QLabel):
     view_changed = pyqtSignal(QRect)
+    zoom_changed = pyqtSignal(float)  # New signal to notify zoom changes
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +97,23 @@ class DrawingArea(QLabel):
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    def zoom_in(self):
+        self.set_scale_factor(self.scale_factor * 1.1)
+
+    def zoom_out(self):
+        self.set_scale_factor(self.scale_factor / 1.1)
+
     def set_scroll_area(self, scroll_area):
         self.scroll_area = scroll_area
 
@@ -73,6 +121,8 @@ class DrawingArea(QLabel):
         self.scale_factor = factor
         self.update_scaled_pixmap()
         self.update()
+        self.zoom_changed.emit(self.scale_factor)  # Emit the new scale factor
+        self.view_changed.emit(self.rect())  # Trigger minimap update
 
     def update_scaled_pixmap(self):
         if self.pixmap():
@@ -537,9 +587,39 @@ class MiniatureView(QLabel):
         self.update()
 
 class ImageListItem(QListWidgetItem):
-    def __init__(self, text, icon):
+    def __init__(self, text, icon, file_path):
         super().__init__(icon, text)
+        self.file_path = file_path
+        self.file_info = QFileInfo(file_path)
         self.setSizeHint(QSize(100, 100))
+
+    def __lt__(self, other):
+        if not isinstance(other, ImageListItem):
+            return super().__lt__(other)
+
+        sort_role = self.listWidget().sort_role
+        if sort_role == "name":
+            return self.text().lower() < other.text().lower()
+        elif sort_role == "date_modified":
+            return self.file_info.lastModified() < other.file_info.lastModified()
+        elif sort_role == "date_created":
+            return self.file_info.birthTime() < other.file_info.birthTime()
+        else:
+            return super().__lt__(other)
+
+class SortableImageList(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.sort_role = "name"
+        self.sort_order = Qt.SortOrder.AscendingOrder
+
+    def setSortRole(self, role):
+        self.sort_role = role
+        self.sortItems()
+
+    def setSortOrder(self, order):
+        self.sort_order = order
+        self.sortItems()
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
@@ -548,56 +628,23 @@ class SettingsDialog(QDialog):
         self.initUI()
 
     def initUI(self):
-        self.setWindowTitle('Modern Image Annotator')
-        self.setGeometry(100, 100, 1200, 800)
+        self.setWindowTitle('Settings')
+        self.setGeometry(100, 100, 400, 300)
 
-        self.create_toolbar()
+        layout = QVBoxLayout(self)
 
-        main_widget = QWidget()
-        main_layout = QHBoxLayout()
+        tab_widget = QTabWidget()
+        tab_widget.addTab(self.createGeneralTab(), "General")
+        tab_widget.addTab(self.createYOLOTab(), "YOLO")
+        tab_widget.addTab(self.createUITab(), "UI")
+        layout.addWidget(tab_widget)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttonBox.accepted.connect(self.saveSettings)
+        buttonBox.rejected.connect(self.reject)
+        layout.addWidget(buttonBox)
 
-        left_pane = self.create_left_pane()
-        self.image_scroll_area = QScrollArea()
-        self.image_label = DrawingArea()
-        self.image_label.set_scroll_area(self.image_scroll_area)
-        self.image_scroll_area.setWidget(self.image_label)
-        self.image_scroll_area.setWidgetResizable(True)
-        self.image_label.view_changed.connect(self.update_minimap_view_rect)
-        self.image_label.classification_changed.connect(self.handle_classification_change)
-        right_pane = self.create_right_pane()
-
-        splitter.addWidget(left_pane)
-        splitter.addWidget(self.image_scroll_area)
-        splitter.addWidget(right_pane)
-
-        main_layout.addWidget(splitter)
-        main_widget.setLayout(main_layout)
-        self.setCentralWidget(main_widget)
-
-        self.statusBar = QStatusBar()
-        self.setStatusBar(self.statusBar)
-        self.dir_label = QLabel()
-
-        self.statusBar.addPermanentWidget(self.dir_label)
-        self.file_label = QLabel()
-        self.statusBar.addPermanentWidget(self.file_label)
-
-        self.create_zoom_controls()
-
-    def handle_classification_change(self, old_label, new_label):
-        if old_label != new_label:
-            if old_label in self.classes:
-                class_id = self.classes.pop(old_label)
-                self.classes[new_label] = class_id
-            elif new_label not in self.classes:
-                self.classes[new_label] = len(self.classes)
-
-            self.update_classification_list()
-
-            if self.settings.get('autosave', False):
-                self.save_yolo()
+        self.setLayout(layout)
 
     def createGeneralTab(self):
         widget = QWidget()
@@ -739,14 +786,13 @@ class ImageBrowser(QMainWindow):
         self.zoom_slider = None
         self.miniature_view = None
         self.settings = {}
+        self.image_loader = None
         self.loadSettings()
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle('Modern Image Annotator')
         self.setGeometry(100, 100, 1200, 800)
-
-        self.create_toolbar()
 
         main_widget = QWidget()
         main_layout = QHBoxLayout()
@@ -779,15 +825,40 @@ class ImageBrowser(QMainWindow):
         self.statusBar.addPermanentWidget(self.file_label)
 
         self.create_zoom_controls()
+        self.image_label.zoom_changed.connect(self.update_zoom_slider)  # Connect the new signal
+
+        # Create toolbar after image_label is initialized
+        self.create_toolbar()
 
     def create_left_pane(self):
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
-        self.image_list = QListWidget()
+
+        # Add "Images:" label
+        left_layout.addWidget(QLabel("Images:"))
+
+        # Add sorting controls
+        sort_layout = QHBoxLayout()
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Name", "Date Modified", "Date Created"])
+        self.sort_combo.currentTextChanged.connect(self.change_sort_role)
+
+        self.order_combo = QComboBox()
+        self.order_combo.addItems(["Ascending", "Descending"])
+        self.order_combo.currentTextChanged.connect(self.change_sort_order)
+
+        sort_layout.addWidget(QLabel("Sort by:"))
+        sort_layout.addWidget(self.sort_combo)
+        sort_layout.addWidget(self.order_combo)
+
+        left_layout.addLayout(sort_layout)
+
+        # Create and add the image list
+        self.image_list = SortableImageList()
         self.image_list.setIconSize(QSize(80, 80))
         self.image_list.itemClicked.connect(self.display_image)
-        left_layout.addWidget(QLabel("Images:"))
         left_layout.addWidget(self.image_list)
+
         left_pane.setMinimumWidth(200)
         left_pane.setMaximumWidth(300)
         return left_pane
@@ -883,20 +954,24 @@ class ImageBrowser(QMainWindow):
 
         self.toolbar.addActions(drawing_tools.actions())
 
+        # Set the "Select" tool as the default
+        select_action.setChecked(True)
+        self.set_drawing_tool('select')
+
     def create_zoom_controls(self):
         zoom_widget = QWidget()
         zoom_layout = QHBoxLayout(zoom_widget)
 
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
-        self.zoom_slider.setRange(1, 500)
+        self.zoom_slider.setRange(10, 500)  # 10% to 500% zoom
         self.zoom_slider.setValue(100)
         self.zoom_slider.valueChanged.connect(self.zoom_image)
 
         zoom_in_btn = QPushButton("+")
-        zoom_in_btn.clicked.connect(lambda: self.zoom_slider.setValue(self.zoom_slider.value() + 10))
+        zoom_in_btn.clicked.connect(self.image_label.zoom_in)
 
         zoom_out_btn = QPushButton("-")
-        zoom_out_btn.clicked.connect(lambda: self.zoom_slider.setValue(self.zoom_slider.value() - 10))
+        zoom_out_btn.clicked.connect(self.image_label.zoom_out)
 
         reset_zoom_btn = QPushButton("Reset")
         reset_zoom_btn.clicked.connect(self.reset_zoom)
@@ -961,19 +1036,32 @@ class ImageBrowser(QMainWindow):
 
     def load_images(self, dir_path):
         self.image_list.clear()
-        for filename in os.listdir(dir_path):
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                file_path = os.path.join(dir_path, filename)
-                try:
-                    pixmap = QPixmap(file_path)
-                    if pixmap.isNull():
-                        print(f"Failed to load image: {file_path}")
-                        continue
-                    icon = pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    item = ImageListItem(filename, QIcon(icon))
-                    self.image_list.addItem(item)
-                except Exception as e:
-                    print(f"Error loading image {file_path}: {str(e)}")
+        self.statusBar.showMessage("Loading images...")
+
+        # Get the list of files in the directory
+        file_list = os.listdir(dir_path)
+
+        # Create and start the image loader thread
+        self.image_loader = ImageLoader(dir_path, file_list)
+        self.image_loader.image_loaded.connect(self.add_image_to_list)
+        self.image_loader.finished.connect(self.image_loading_finished)
+        self.image_loader.start()
+
+    def add_image_to_list(self, filename, icon):
+        file_path = os.path.join(self.current_directory, filename)
+        item = ImageListItem(filename, icon, file_path)
+        self.image_list.addItem(item)
+
+    def image_loading_finished(self):
+        self.statusBar.showMessage("Image loading complete")
+        self.image_list.sortItems()
+        self.image_loader = None
+
+    def closeEvent(self, event):
+        if self.image_loader:
+            self.image_loader.stop()
+            self.image_loader.wait()
+        super().closeEvent(event)
 
     def display_image(self, item):
         if not self.current_directory:
@@ -1071,14 +1159,14 @@ class ImageBrowser(QMainWindow):
     def zoom_image(self, value):
         scale_factor = value / 100.0
         self.image_label.set_scale_factor(scale_factor)
+
+    def update_zoom_slider(self, scale_factor):
+        self.zoom_slider.setValue(int(scale_factor * 100))
         self.update_minimap()
-        self.image_label.update()
 
     def reset_zoom(self):
         self.zoom_slider.setValue(100)
         self.image_label.set_scale_factor(1.0)
-        self.image_label.update()
-        # Don't update minimap here, as there might not be an image loaded
 
     def update_minimap(self):
         if self.image_label.pixmap() and not self.image_label.pixmap().isNull():
@@ -1329,6 +1417,21 @@ class ImageBrowser(QMainWindow):
         self.image_label.line_thickness = line_thickness
         self.image_label.font_size = font_size
         self.image_label.update()
+
+    def change_sort_role(self, role):
+        role_map = {
+            "Name": "name",
+            "Date Modified": "date_modified",
+            "Date Created": "date_created"
+        }
+        self.image_list.setSortRole(role_map[role])
+
+    def change_sort_order(self, order):
+        order_map = {
+            "Ascending": Qt.SortOrder.AscendingOrder,
+            "Descending": Qt.SortOrder.DescendingOrder
+        }
+        self.image_list.setSortOrder(order_map[order])
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
