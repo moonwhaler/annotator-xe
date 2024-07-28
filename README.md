@@ -34,3 +34,10 @@ After installing, you may start the app by activating the virtual environment (a
 And then execute the .py file with:
 
 `python pyQT_YOLO.py`
+
+## Updating
+Updating is really easy. Just change into the app directory and call:
+
+`git pull`
+
+Start normally after that.
