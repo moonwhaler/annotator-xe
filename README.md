@@ -2,7 +2,7 @@
 
 Modern Image Annotator is a powerful and user-friendly desktop application for annotating images with bounding boxes and polygons. It's designed to streamline the process of creating datasets for computer vision and machine learning projects, particularly those using the YOLO (You Only Look Once) format.
 
-![image](https://github.com/user-attachments/assets/883e6a9d-58c6-49f8-9c3e-56ab0014e207)
+![image](https://github.com/user-attachments/assets/22c4cf92-4d6e-4a88-92fd-2c3d5eef2cf7)
 
 ## Features
 
