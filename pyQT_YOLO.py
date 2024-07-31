@@ -6,11 +6,12 @@ from ultralytics import YOLO
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QListWidget, QHBoxLayout, QWidget, QLabel,
                              QVBoxLayout, QToolBar, QStatusBar, QListView, QPushButton, QSplitter, QMessageBox,
                              QMenu, QInputDialog, QDialog, QScrollArea, QListWidgetItem, QAbstractItemView, QSlider,
-                             QTabWidget, QFormLayout, QLineEdit, QSpinBox, QCheckBox, QDialogButtonBox, QComboBox)
+                             QTabWidget, QFormLayout, QLineEdit, QSpinBox, QCheckBox, QDialogButtonBox, QComboBox,
+                             QDockWidget, QSizePolicy)
 from PyQt6.QtGui import (QPixmap, QIcon, QPainter, QColor, QPen, QFont, QPainterPath, QPolygonF, QAction, QPalette,
                          QActionGroup, QCursor, QImageReader, QStandardItemModel, QStandardItem, QFontMetrics)
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, pyqtSignal, QPoint, QRect, QFileInfo
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import (Qt, QPointF, QRectF, QSize, QSizeF, pyqtSignal, QPoint, QRect, QFileInfo,
+                          QThread, QTimer, QDateTime)
 
 def increase_image_allocation_limit():
     QImageReader.setAllocationLimit(0)  # 0 means no limit
@@ -51,19 +52,44 @@ class Shape:
         self.label = label
         self.selected = False
         self.color = self.generate_random_color()
+        if self.type == 'polygon':
+            self.close_polygon()
 
     @staticmethod
     def generate_random_color():
         return QColor.fromHsv(torch.randint(0, 360, (1,)).item(), 255, 255, 128)
+
+    def close_polygon(self):
+        if self.type == 'polygon' and len(self.points) > 2:
+            if self.points[0] != self.points[-1]:
+                self.points.append(QPointF(self.points[0]))
+
+    def remove_point(self, index):
+        if self.type == 'polygon' and len(self.points) > 3:
+            del self.points[index]
+            self.close_polygon()
+
+    def move_by(self, delta):
+        self.points = [point + delta for point in self.points]
+
+    def move_point(self, index, new_pos):
+        if 0 <= index < len(self.points):
+            self.points[index] = new_pos
+            if self.type == 'polygon':
+                if index == 0 or index == len(self.points) - 1:
+                    self.points[0] = self.points[-1] = new_pos
 
 class DrawingArea(QLabel):
     view_changed = pyqtSignal(QRect)
     zoom_changed = pyqtSignal(float)
     classification_changed = pyqtSignal(str)
     shapes_changed = pyqtSignal()
+    points_deleted = pyqtSignal()
+    shape_created = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.scale_factor = 1.0
         self.box_color = QColor('#FF0000')
         self.polygon_color = QColor('#00FF00')
         self.line_thickness = 2
@@ -98,23 +124,7 @@ class DrawingArea(QLabel):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-    def wheelEvent(self, event):
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            delta = event.angleDelta().y()
-            if delta > 0:
-                self.zoom_in()
-            else:
-                self.zoom_out()
-            event.accept()
-        else:
-            super().wheelEvent(event)
-
-    def zoom_in(self):
-        self.set_scale_factor(self.scale_factor * 1.1)
-
-    def zoom_out(self):
-        self.set_scale_factor(self.scale_factor / 1.1)
+        self.selected_points = []  # Store selected points
 
     def set_scroll_area(self, scroll_area):
         self.scroll_area = scroll_area
@@ -158,7 +168,7 @@ class DrawingArea(QLabel):
             else:
                 self.current_shape.points.append(pos)
         elif self.current_tool == 'select':
-            self.handle_select_tool(pos)
+            self.handle_select_tool(pos, event)
         elif self.current_tool == 'move':
             self.handle_move_tool(pos)
         elif self.current_tool == 'box':
@@ -207,12 +217,15 @@ class DrawingArea(QLabel):
                 self.shapes.append(self.current_shape)
                 self.current_shape = None
                 self.drawing = False
+                self.shape_created.emit()
             elif self.current_tool == 'polygon':
                 if len(self.current_shape.points) > 2 and (pos - self.current_shape.points[0]).manhattanLength() < 20 / self.scale_factor:
                     self.current_shape.points.pop()
+                    self.current_shape.points.append(self.current_shape.points[0])  # Close the polygon
                     self.shapes.append(self.current_shape)
                     self.current_shape = None
                     self.drawing = False
+                    self.shape_created.emit()
         self.selecting = False
         self.moving_shape = False
         self.resize_handle = None
@@ -225,6 +238,7 @@ class DrawingArea(QLabel):
         if self.current_tool == 'polygon' and self.drawing:
             if len(self.current_shape.points) > 2:
                 self.shapes.append(self.current_shape)
+                self.shape_created.emit()
             self.current_shape = None
             self.drawing = False
             self.update()
@@ -246,18 +260,11 @@ class DrawingArea(QLabel):
         if self.current_shape:
             self.draw_shape(painter, self.current_shape)
 
-        # Draw hover effects
-        if self.hover_point:
-            shape, index = self.hover_point
-            point = shape.points[index]
-            painter.setBrush(QColor(255, 0, 0, 128))
-            painter.drawEllipse(point, 5 / self.scale_factor, 5 / self.scale_factor)
-        elif self.hover_edge:
-            shape, index = self.hover_edge
-            p1 = shape.points[index]
-            p2 = shape.points[(index + 1) % len(shape.points)]
-            painter.setPen(QPen(QColor(255, 0, 0, 128), 2 / self.scale_factor))
-            painter.drawLine(p1, p2)
+        # Draw selected points
+        for shape, point_index in self.selected_points:
+            point = shape.points[point_index]
+            painter.setBrush(QColor(255, 255, 0, 200))
+            painter.drawEllipse(point, 6 / self.scale_factor, 6 / self.scale_factor)
 
     def draw_shape(self, painter, shape):
         color = shape.color if hasattr(shape, 'color') else (self.box_color if shape.type == 'box' else self.polygon_color)
@@ -379,10 +386,13 @@ class DrawingArea(QLabel):
             else:
                 return abs(n.x() * pa.y() - n.y() * pa.x()) / ((n.x()**2 + n.y()**2)**0.5)
 
-    def handle_select_tool(self, pos):
+    def handle_select_tool(self, pos, event):
         self.resize_handle = None
         self.moving_point = None
         self.moving_shape = False
+
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.selected_points = []  # Clear previously selected points if Ctrl is not pressed
 
         for shape in self.shapes:
             shape.selected = False  # Deselect all shapes first
@@ -396,12 +406,22 @@ class DrawingArea(QLabel):
                     self.selected_shape = shape
                     return
             elif shape.type == 'polygon':
-                point = self.get_nearest_point(shape, pos)
-                if (point - pos).manhattanLength() < 10 / self.scale_factor:
-                    self.moving_point = point
-                    shape.selected = True
-                    self.selected_shape = shape
-                    return
+                for i, point in enumerate(shape.points):
+                    if (point - pos).manhattanLength() < 10 / self.scale_factor:
+                        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                            # If Ctrl is pressed, toggle selection
+                            if (shape, i) in self.selected_points:
+                                self.selected_points.remove((shape, i))
+                            else:
+                                self.selected_points.append((shape, i))
+                        else:
+                            # If Ctrl is not pressed, select only this point
+                            self.selected_points = [(shape, i)]
+                        self.moving_point = point
+                        shape.selected = True
+                        self.selected_shape = shape
+                        self.update()
+                        return
 
             if self.shape_contains_point(shape, pos):
                 self.moving_shape = True
@@ -423,10 +443,10 @@ class DrawingArea(QLabel):
 
     def move_shape(self, pos):
         if self.selected_shape and self.move_start_point != QPointF():
-            delta = pos - self.move_start_point
-            for point in self.selected_shape.points:
-                point += delta
+            delta = (pos - self.move_start_point) / self.scale_factor
+            self.selected_shape.move_by(delta)
             self.move_start_point = pos
+            self.update()
 
     def get_resize_handle(self, shape, pos):
         rect = QRectF(shape.points[0], shape.points[1]).normalized()
@@ -456,8 +476,13 @@ class DrawingArea(QLabel):
     def move_polygon_point(self, pos):
         if self.moving_point and self.selected_shape:
             index = self.selected_shape.points.index(self.moving_point)
-            self.selected_shape.points[index] = pos
-            self.moving_point = pos
+            new_pos = pos / self.scale_factor
+            self.selected_shape.move_point(index, new_pos)
+            self.moving_point = new_pos
+
+            # Update selected_points if the moved point is in the selection
+            self.selected_points = [(shape, i) if shape != self.selected_shape or i != index
+                                    else (shape, index) for shape, i in self.selected_points]
             self.update()
 
     def get_nearest_point(self, shape, point):
@@ -479,12 +504,6 @@ class DrawingArea(QLabel):
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
         elif event.key() == Qt.Key.Key_Escape:
             self.finish_drawing()
-        elif event.key() == Qt.Key.Key_Delete:
-            if self.selected_shape:
-                self.shapes.remove(self.selected_shape)
-                self.selected_shape = None
-                self.update()
-                self.shapes_changed.emit()
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
@@ -541,21 +560,93 @@ class DrawingArea(QLabel):
         self.update()
         self.shapes_changed.emit()
 
+    def delete_selected_points(self):
+        shapes_to_update = set()
+        points_to_remove = []
+
+        for shape, point_index in self.selected_points:
+            if shape.type == 'polygon' and len(shape.points) > 3:
+                shapes_to_update.add(shape)
+                points_to_remove.append((shape, point_index))
+
+        # Sort points_to_remove in reverse order to avoid index issues
+        points_to_remove.sort(key=lambda x: x[1], reverse=True)
+
+        for shape, point_index in points_to_remove:
+            shape.remove_point(point_index)
+
+        # Clear all selection and movement states
+        self.selected_points = []
+        self.moving_point = None
+        self.selected_shape = None
+        self.hover_point = None
+        self.hover_edge = None
+        self.hover_shape = None
+
+        # Remove shapes with less than 3 points
+        self.shapes = [shape for shape in self.shapes if len(shape.points) >= 3]
+
+        self.update()
+        self.shapes_changed.emit()
+        self.points_deleted.emit()
+
 class MiniatureView(QLabel):
     view_rect_changed = pyqtSignal(QRectF)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(200, 200)
-        self.setMaximumSize(200, 200)
+        self.setMinimumSize(100, 100)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.view_rect = QRectF()
         self.dragging = False
         self.start_pos = QPointF()
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.original_pixmap = None
+        self.image_size = QSizeF()
+        self.aspect_ratio = 1.0
+
+    def setPixmap(self, pixmap):
+        if pixmap and not pixmap.isNull():
+            self.original_pixmap = pixmap
+            self.image_size = pixmap.size()
+            self.aspect_ratio = self.image_size.width() / self.image_size.height()
+            self.update_scaled_pixmap()
+        else:
+            print("Warning: Attempted to set a null pixmap in MiniatureView")
+            self.original_pixmap = None
+            self.image_size = QSizeF()
+            self.aspect_ratio = 1.0
+            super().setPixmap(QPixmap())  # Set an empty pixmap
+
+    def update_scaled_pixmap(self):
+        if self.original_pixmap and not self.original_pixmap.isNull():
+            available_width = self.width()
+            available_height = self.height()
+
+            # Calculate the size that maintains aspect ratio and fits within the available space
+            scaled_width = available_width
+            scaled_height = scaled_width / self.aspect_ratio
+
+            if scaled_height > available_height:
+                scaled_height = available_height
+                scaled_width = scaled_height * self.aspect_ratio
+
+            scaled_pixmap = self.original_pixmap.scaled(
+                int(scaled_width), int(scaled_height),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            super().setPixmap(scaled_pixmap)
+        else:
+            super().setPixmap(QPixmap())  # Set an empty pixmap
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_scaled_pixmap()
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if self.pixmap():
+        if self.pixmap() and not self.pixmap().isNull():
             painter = QPainter(self)
             painter.setPen(QPen(Qt.GlobalColor.red, 2))
             painter.drawRect(self.view_rect)
@@ -628,6 +719,11 @@ class SortableImageList(QListWidget):
     def setSortOrder(self, order):
         self.sort_order = order
         self.sortItems()
+
+    def sortItems(self, order=None):
+        if order is None:
+            order = self.sort_order
+        super().sortItems(order)
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
@@ -786,66 +882,204 @@ class YOLODetector:
 class ImageBrowser(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.dock_widgets = {}
         increase_image_allocation_limit()
         self.current_directory = ""
         self.current_image = ""
         self.classes = {}
         self.yaml_data = {}
         self.yolo_detector = None
-        self.zoom_slider = None
-        self.miniature_view = None
         self.settings = {}
         self.image_loader = None
+
+        # Initialize UI elements
+        self.zoom_slider = None
+        self.miniature_view = None
+        self.image_list = None
+        self.class_list = None
+        self.class_model = None
+        self.shape_list = None
+        self.image_label = DrawingArea(self)
+        self.image_scroll_area = None
+        self.status_bar = None
+        self.dir_label = None
+        self.file_label = None
+
         self.loadSettings()
         self.initUI()
+        self.setupConnections()
+
+        print("ImageBrowser initialization complete")  # Debug print
+        print(f"self.shape_list exists: {hasattr(self, 'shape_list')}")  # Debug print
 
     def initUI(self):
         self.setWindowTitle('Modern Image Annotator')
         self.setGeometry(100, 100, 1200, 800)
 
-        main_widget = QWidget()
-        main_layout = QHBoxLayout()
+        # Create central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        left_pane = self.create_left_pane()
+        # Create and set up the image label
         self.image_scroll_area = QScrollArea()
         self.image_label = DrawingArea()
         self.image_label.set_scroll_area(self.image_scroll_area)
         self.image_scroll_area.setWidget(self.image_label)
         self.image_scroll_area.setWidgetResizable(True)
+
+        # Set the image scroll area as the central widget
+        layout = QVBoxLayout(central_widget)
+        layout.addWidget(self.image_scroll_area)
+
+        # Create status bar
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.dir_label = QLabel()
+        self.status_bar.addPermanentWidget(self.dir_label)
+        self.file_label = QLabel()
+        self.status_bar.addPermanentWidget(self.file_label)
+
+        # Create dock widgets
+        self.create_dock_widgets()
+
+        # Create toolbar
+        self.create_toolbar()
+
+        # Create menu bar
+        menubar = self.menuBar()
+
+        # Add View menu
+        view_menu = menubar.addMenu('View')
+        self.create_view_menu(view_menu)
+
+    def on_resize(self, event):
+        super().resizeEvent(event)
+        self.update_minimap_view_rect()
+
+    def on_miniature_view_resize(self, event):
+        self.miniature_view.update_scaled_pixmap()
+        self.update_minimap_view_rect()
+
+    def create_view_menu(self, view_menu):
+        for name, dock_widget in self.dock_widgets.items():
+            action = self.create_dock_toggle_action(name, dock_widget)
+            view_menu.addAction(action)
+
+    def create_dock_toggle_action(self, name, dock_widget):
+        action = QAction(name, self, checkable=True)
+        action.setChecked(dock_widget.isVisible())
+        action.triggered.connect(lambda checked: self.toggle_dock_visibility(dock_widget, checked))
+        return action
+
+    def toggle_dock_visibility(self, dock_widget, visible):
+        if visible:
+            dock_widget.show()
+        else:
+            dock_widget.hide()
+
+    def setupConnections(self):
+        # Connect image label signals
         self.image_label.view_changed.connect(self.update_minimap_view_rect)
         self.image_label.zoom_changed.connect(self.update_zoom_slider)
         self.image_label.classification_changed.connect(self.handle_classification_change)
         self.image_label.shapes_changed.connect(self.update_shapes)
-        right_pane = self.create_right_pane()
+        self.image_label.shape_created.connect(self.on_shape_created)
 
-        splitter.addWidget(left_pane)
-        splitter.addWidget(self.image_scroll_area)
-        splitter.addWidget(right_pane)
+        # Connect image list
+        if self.image_list:
+            self.image_list.itemClicked.connect(self.display_image)
 
-        main_layout.addWidget(splitter)
-        main_widget.setLayout(main_layout)
-        self.setCentralWidget(main_widget)
+        # Connect class list
+        if self.class_list:
+            self.class_list.doubleClicked.connect(self.edit_classification)
 
-        self.statusBar = QStatusBar()
-        self.setStatusBar(self.statusBar)
-        self.dir_label = QLabel()
+        # Connect shape list
+        if self.shape_list:
+            self.shape_list.itemSelectionChanged.connect(self.select_shape_from_list)
 
-        self.statusBar.addPermanentWidget(self.dir_label)
-        self.file_label = QLabel()
-        self.statusBar.addPermanentWidget(self.file_label)
+        # Connect miniature view
+        self.miniature_view.view_rect_changed.connect(self.update_main_view)
 
-        self.create_zoom_controls()
+        # Connect scroll bars to update minimap
+        self.image_scroll_area.horizontalScrollBar().valueChanged.connect(self.update_minimap_view_rect)
+        self.image_scroll_area.verticalScrollBar().valueChanged.connect(self.update_minimap_view_rect)
 
-        # Create toolbar after image_label is initialized
-        self.create_toolbar()
+        # Connect zoom slider
+        if self.zoom_slider:
+            self.zoom_slider.valueChanged.connect(self.zoom_image)
+
+        # Connect window resize event
+        self.resizeEvent = self.on_resize
+
+        # Connect miniature view resize event
+        self.miniature_view.resizeEvent = self.on_miniature_view_resize
+
+        self.image_label.points_deleted.connect(self.on_points_deleted)
+
+    def on_shape_created(self):
+        print("New shape created")  # Debug print
+        self.update_shape_list()
+        if self.settings.get('autosave', False):
+            self.save_yolo()
+
+    def create_dock_widgets(self):
+        # Image Browser Dock
+        self.dock_widgets["Image Browser"] = QDockWidget("Image Browser", self)
+        self.dock_widgets["Image Browser"].setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.dock_widgets["Image Browser"].setWidget(self.create_left_pane())
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_widgets["Image Browser"])
+
+        # Miniature View Dock
+        self.dock_widgets["Miniature View"] = QDockWidget("Miniature View", self)
+        self.dock_widgets["Miniature View"].setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        miniature_widget = QWidget()
+        miniature_layout = QVBoxLayout(miniature_widget)
+        miniature_layout.setContentsMargins(0, 0, 0, 0)
+        miniature_layout.setSpacing(0)
+
+        self.miniature_view = MiniatureView(self)
+        self.miniature_view.view_rect_changed.connect(self.update_main_view)
+        miniature_layout.addWidget(self.miniature_view, 1)  # Give it a stretch factor of 1
+
+        zoom_controls = self.create_zoom_controls()
+        miniature_layout.addWidget(zoom_controls)
+
+        self.dock_widgets["Miniature View"].setWidget(miniature_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["Miniature View"])
+
+        # Classification List Dock
+        self.dock_widgets["Classifications"] = QDockWidget("Classifications", self)
+        self.dock_widgets["Classifications"].setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        classification_widget = QWidget()
+        classification_layout = QVBoxLayout(classification_widget)
+        self.class_list = QListView()
+        self.class_model = QStandardItemModel()
+        self.class_list.setModel(self.class_model)
+        self.class_list.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
+        self.class_list.doubleClicked.connect(self.edit_classification)
+        classification_layout.addWidget(self.class_list)
+        classification_layout.addWidget(self.create_class_toolbar())
+        apply_button = QPushButton("Apply Classification")
+        apply_button.clicked.connect(self.apply_classification)
+        classification_layout.addWidget(apply_button)
+        self.dock_widgets["Classifications"].setWidget(classification_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["Classifications"])
+
+        # Shape List Dock
+        self.dock_widgets["Shapes"] = QDockWidget("Shapes", self)
+        self.dock_widgets["Shapes"].setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.shape_list = QListWidget()
+        print("Shape list created")  # Debug print
+        self.shape_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.shape_list.itemSelectionChanged.connect(self.select_shape_from_list)
+        self.dock_widgets["Shapes"].setWidget(self.shape_list)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["Shapes"])
+        print("Shape list dock widget added")  # Debug print
 
     def create_left_pane(self):
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
 
-        # Add "Images:" label
         left_layout.addWidget(QLabel("Images:"))
 
         # Add sorting controls
@@ -870,27 +1104,9 @@ class ImageBrowser(QMainWindow):
         self.image_list.itemClicked.connect(self.display_image)
         left_layout.addWidget(self.image_list)
 
-        left_pane.setMinimumWidth(200)
-        left_pane.setMaximumWidth(300)
         return left_pane
 
-    def create_right_pane(self):
-        right_pane = QWidget()
-        right_layout = QVBoxLayout(right_pane)
-
-        self.miniature_view = MiniatureView(self)
-        self.miniature_view.view_rect_changed.connect(self.update_main_view)
-        right_layout.addWidget(self.miniature_view)
-
-        self.class_list = QListView()
-        self.class_model = QStandardItemModel()
-        self.class_list.setModel(self.class_model)
-        self.class_list.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
-        self.class_list.doubleClicked.connect(self.edit_classification)
-
-        right_layout.addWidget(QLabel("Classifications:"))
-        right_layout.addWidget(self.class_list)
-
+    def create_class_toolbar(self):
         class_toolbar = QToolBar()
         class_toolbar.setIconSize(QSize(24, 24))
 
@@ -906,22 +1122,7 @@ class ImageBrowser(QMainWindow):
         delete_class_action.triggered.connect(self.delete_classification)
         class_toolbar.addAction(delete_class_action)
 
-        right_layout.addWidget(class_toolbar)
-
-        apply_button = QPushButton("Apply Classification")
-        apply_button.clicked.connect(self.apply_classification)
-        right_layout.addWidget(apply_button)
-
-        right_layout.addWidget(QLabel("Shapes:"))
-        self.shape_list = QListWidget()
-        self.shape_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.shape_list.itemSelectionChanged.connect(self.select_shape_from_list)
-        right_layout.addWidget(self.shape_list)
-
-        right_pane.setMinimumWidth(200)
-        right_pane.setMaximumWidth(300)
-
-        return right_pane
+        return class_toolbar
 
     def create_toolbar(self):
         self.toolbar = QToolBar()
@@ -938,11 +1139,6 @@ class ImageBrowser(QMainWindow):
         select_action.setCheckable(True)
         select_action.triggered.connect(lambda: self.set_drawing_tool('select'))
         drawing_tools.addAction(select_action)
-
-        move_action = QAction(self.create_icon('✋'), 'Move', self)
-        move_action.setCheckable(True)
-        move_action.triggered.connect(lambda: self.set_drawing_tool('move'))
-        drawing_tools.addAction(move_action)
 
         box_action = QAction(self.create_icon('◻️'), 'Draw Box', self)
         box_action.setCheckable(True)
@@ -974,37 +1170,38 @@ class ImageBrowser(QMainWindow):
 
         # Set the "Select" tool as the default
         select_action.setChecked(True)
-        self.set_drawing_tool('select')
-
-    def handle_classification_change(self, new_label):
-        if new_label not in self.classes:
-            self.classes[new_label] = len(self.classes)
-        self.update_classification_list()
+        if hasattr(self, 'status_bar'):
+            self.set_drawing_tool('select')
+        else:
+            print("Warning: status_bar not initialized")
 
     def create_zoom_controls(self):
         zoom_widget = QWidget()
         zoom_layout = QHBoxLayout(zoom_widget)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins for a more compact layout
 
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
-        self.zoom_slider.setRange(10, 500)  # 10% to 500% zoom
+        self.zoom_slider.setRange(10, 300)  # 10% to 300% zoom
         self.zoom_slider.setValue(100)
         self.zoom_slider.valueChanged.connect(self.zoom_image)
 
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.clicked.connect(self.image_label.zoom_in)
+        self.zoom_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.zoom_slider.setTickInterval(10)  # Minor ticks every 10%
 
-        zoom_out_btn = QPushButton("-")
-        zoom_out_btn.clicked.connect(self.image_label.zoom_out)
+        for value in [10, 50, 100, 200, 300]:
+            self.zoom_slider.setTickPosition(QSlider.TickPosition.TicksBothSides)
+            self.zoom_slider.setPageStep(value)
 
-        reset_zoom_btn = QPushButton("Reset")
+        reset_zoom_btn = QPushButton("↺")
+        reset_zoom_btn.setToolTip("Reset Zoom")
         reset_zoom_btn.clicked.connect(self.reset_zoom)
+        reset_zoom_btn.setMaximumWidth(30)
+        reset_zoom_btn.setStyleSheet("font-size: 16px;")
 
-        zoom_layout.addWidget(zoom_out_btn)
         zoom_layout.addWidget(self.zoom_slider)
-        zoom_layout.addWidget(zoom_in_btn)
         zoom_layout.addWidget(reset_zoom_btn)
 
-        self.statusBar.addPermanentWidget(zoom_widget)
+        return zoom_widget
 
     @staticmethod
     def create_icon(text):
@@ -1020,9 +1217,9 @@ class ImageBrowser(QMainWindow):
         painter.setFont(QFont('Segoe UI Emoji', 20))
 
         if is_dark_mode:
-            painter.setPen(Qt.GlobalColor.white)  # Use white color for dark mode
+            painter.setPen(Qt.GlobalColor.white)
         else:
-            painter.setPen(Qt.GlobalColor.black)  # Use black color for light mode
+            painter.setPen(Qt.GlobalColor.black)
 
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
         painter.end()
@@ -1033,7 +1230,15 @@ class ImageBrowser(QMainWindow):
         self.image_label.current_tool = tool
         if tool != 'polygon':
             self.image_label.finish_drawing()
-        self.statusBar.showMessage(f"Current tool: {tool.capitalize()}")
+        if hasattr(self, 'status_bar'):
+            self.status_bar.showMessage(f"Current tool: {tool.capitalize()}")
+        else:
+            print(f"Current tool: {tool.capitalize()}")
+
+    def handle_classification_change(self, new_label):
+        if new_label not in self.classes:
+            self.classes[new_label] = len(self.classes)
+        self.update_classification_list()
 
     def open_directory(self):
         new_directory = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -1045,6 +1250,7 @@ class ImageBrowser(QMainWindow):
             self.dir_label.setText(f"Directory: {self.current_directory}")
 
     def reset_ui(self):
+        print("ImageBrowser.reset_ui called")
         self.current_image = ""
         self.classes = {}
         self.image_label.clear()
@@ -1053,18 +1259,20 @@ class ImageBrowser(QMainWindow):
         self.image_list.clear()
         self.class_model.clear()
         self.file_label.setText("")
-        self.miniature_view.clear()  # Clear the miniature view
-        self.miniature_view.set_view_rect(QRectF())  # Reset the view rectangle
+        self.miniature_view.clear()
+        self.miniature_view.set_view_rect(QRectF())
         self.reset_zoom()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_minimap_view_rect()
 
     def load_images(self, dir_path):
         self.image_list.clear()
-        self.statusBar.showMessage("Loading images...")
+        self.show_status_message("Loading images...")
 
-        # Get the list of files in the directory
         file_list = os.listdir(dir_path)
 
-        # Create and start the image loader thread
         self.image_loader = ImageLoader(dir_path, file_list)
         self.image_loader.image_loaded.connect(self.add_image_to_list)
         self.image_loader.finished.connect(self.image_loading_finished)
@@ -1076,7 +1284,7 @@ class ImageBrowser(QMainWindow):
         self.image_list.addItem(item)
 
     def image_loading_finished(self):
-        self.statusBar.showMessage("Image loading complete")
+        self.show_status_message("Image loading complete")
         self.image_list.sortItems()
         self.image_loader = None
 
@@ -1090,28 +1298,39 @@ class ImageBrowser(QMainWindow):
         if not self.current_directory:
             return
 
-        # Check if autosave is enabled and if there's a current image
         if self.settings.get('autosave', False) and self.current_image:
-            self.save_yolo()  # Save the current image annotations before loading the new one
+            self.save_yolo()
 
         self.current_image = item.text()
         image_path = os.path.join(self.current_directory, self.current_image)
+        print(f"Attempting to display image: {image_path}")
         try:
             pixmap = QPixmap(image_path)
             if pixmap.isNull():
                 QMessageBox.warning(self, "Error", f"Failed to load image: {self.current_image}")
                 return
+            print(f"Image loaded successfully. Pixmap size: {pixmap.size()}")
             self.image_label.setPixmap(pixmap)
             self.image_label.shapes = []
             self.image_label.current_shape = None
+            self.image_label.scale_factor = 1.0  # Reset scale factor
             self.load_yolo_annotations()
             self.file_label.setText(f"File: {self.current_image}")
             self.update_classification_list()
-            self.update_shape_list()  # Update the shape list
+            print("Calling update_shape_list() from display_image")  # Debug print
+            self.update_shape_list()
             self.update_minimap()
+            self.update_minimap_view_rect()
             self.reset_zoom()
+
+            # Add this line to ensure the main view is updated
+            self.image_label.update()
+
+            # Force an update of the miniature view
+            QTimer.singleShot(100, self.update_minimap_view_rect)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading image {self.current_image}: {str(e)}")
+            print(f"Exception in display_image: {str(e)}")
 
     def add_classification(self):
         new_class, ok = QInputDialog.getText(self, "Add Classification", "Enter new classification:")
@@ -1157,7 +1376,7 @@ class ImageBrowser(QMainWindow):
         if self.image_label.selected_shape:
             self.image_label.selected_shape.label = selected_class
             self.image_label.update()
-            self.update_shapes()  # Update shapes after applying classification
+            self.update_shapes()
             if self.settings.get('autosave', False):
                 self.save_yolo()
         else:
@@ -1170,13 +1389,24 @@ class ImageBrowser(QMainWindow):
             self.class_model.appendRow(item)
 
     def update_shape_list(self):
-        self.shape_list.clear()
-        for i, shape in enumerate(self.image_label.shapes):
-            shape_type = "Box" if shape.type == 'box' else "Polygon"
-            label = shape.label if shape.label else "Unlabeled"
-            item = QListWidgetItem(f"{shape_type} {i+1}: {label}")
-            item.setData(Qt.ItemDataRole.UserRole, i)  # Store the index of the shape
-            self.shape_list.addItem(item)
+        print("Entering update_shape_list() method")
+        if hasattr(self, 'shape_list'):
+            print(f"Shape list exists. Current item count: {self.shape_list.count()}")
+            self.shape_list.clear()
+            if hasattr(self.image_label, 'shapes'):
+                print(f"Number of shapes in image_label: {len(self.image_label.shapes)}")
+                for i, shape in enumerate(self.image_label.shapes):
+                    shape_type = "Box" if shape.type == 'box' else "Polygon"
+                    label = shape.label if shape.label and shape.label != '-1' else "Unlabeled"
+                    item = QListWidgetItem(f"{shape_type} {i+1}: {label}")
+                    item.setData(Qt.ItemDataRole.UserRole, i)
+                    self.shape_list.addItem(item)
+                    print(f"Added item to shape list: {shape_type} {i+1}: {label}")
+            else:
+                print("self.image_label.shapes does not exist")
+            print(f"Updated shape list with {self.shape_list.count()} shapes")
+        else:
+            print("self.shape_list does not exist")
 
     def select_shape_from_list(self):
         selected_items = self.shape_list.selectedItems()
@@ -1185,7 +1415,7 @@ class ImageBrowser(QMainWindow):
             if 0 <= shape_index < len(self.image_label.shapes):
                 self.image_label.selected_shape = self.image_label.shapes[shape_index]
                 self.image_label.update()
-                self.setFocus()  # Set focus to the ImageBrowser to receive key events
+                self.setFocus()
 
     def update_shape_labels(self, old_label, new_label):
         for shape in self.image_label.shapes:
@@ -1202,6 +1432,7 @@ class ImageBrowser(QMainWindow):
     def zoom_image(self, value):
         scale_factor = value / 100.0
         self.image_label.set_scale_factor(scale_factor)
+        self.update_minimap_view_rect()
 
     def update_zoom_slider(self, scale_factor):
         self.zoom_slider.setValue(int(scale_factor * 100))
@@ -1212,46 +1443,67 @@ class ImageBrowser(QMainWindow):
         self.image_label.set_scale_factor(1.0)
 
     def update_minimap(self):
+        print("ImageBrowser.update_minimap called")
         if self.image_label.pixmap() and not self.image_label.pixmap().isNull():
-            scaled_pixmap = self.image_label.pixmap().scaled(
-                self.miniature_view.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            self.miniature_view.setPixmap(scaled_pixmap)
+            print(f"Updating minimap with pixmap. Size: {self.image_label.pixmap().size()}")
+            self.miniature_view.setPixmap(self.image_label.pixmap())
             self.update_minimap_view_rect()
         else:
-            self.miniature_view.clear()
+            print("Clearing minimap due to null pixmap")
+            self.miniature_view.setPixmap(QPixmap())  # Set an empty pixmap
             self.miniature_view.set_view_rect(QRectF())
 
     def update_minimap_view_rect(self):
-        if self.image_label.pixmap() and not self.image_label.pixmap().isNull():
-            viewport_rect = self.image_scroll_area.viewport().rect()
-            viewport_rect.translate(
-                self.image_scroll_area.horizontalScrollBar().value(),
-                self.image_scroll_area.verticalScrollBar().value()
-            )
-            if self.image_label.width() > 0 and self.image_label.height() > 0:
-                scaled_rect = QRectF(
-                    viewport_rect.x() * self.miniature_view.width() / self.image_label.width(),
-                    viewport_rect.y() * self.miniature_view.height() / self.image_label.height(),
-                    viewport_rect.width() * self.miniature_view.width() / self.image_label.width(),
-                    viewport_rect.height() * self.miniature_view.height() / self.image_label.height()
-                )
-                self.miniature_view.set_view_rect(scaled_rect)
-        else:
+        if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
             self.miniature_view.set_view_rect(QRectF())
+            return
+
+        # Get the size of the entire image
+        image_size = self.image_label.pixmap().size()
+
+        # Get the size of the viewport (visible area)
+        viewport_size = self.image_scroll_area.viewport().size()
+
+        # Calculate the visible rectangle in the image's coordinate system
+        visible_rect = QRectF(
+            self.image_scroll_area.horizontalScrollBar().value() / self.image_label.scale_factor,
+            self.image_scroll_area.verticalScrollBar().value() / self.image_label.scale_factor,
+            viewport_size.width() / self.image_label.scale_factor,
+            viewport_size.height() / self.image_label.scale_factor
+        )
+
+        # Ensure the visible rect is within the image bounds
+        visible_rect = visible_rect.intersected(QRectF(0, 0, image_size.width(), image_size.height()))
+
+        # Calculate the scale factor between the miniature view and the full image
+        miniature_scale_x = self.miniature_view.width() / image_size.width()
+        miniature_scale_y = self.miniature_view.height() / image_size.height()
+
+        # Scale the visible rect to the miniature view size
+        miniature_rect = QRectF(
+            visible_rect.x() * miniature_scale_x,
+            visible_rect.y() * miniature_scale_y,
+            visible_rect.width() * miniature_scale_x,
+            visible_rect.height() * miniature_scale_y
+        )
+
+        self.miniature_view.set_view_rect(miniature_rect)
 
     def update_main_view(self, rect):
         if self.image_label.pixmap():
-            x = rect.x() * self.image_label.width() / self.miniature_view.width()
-            y = rect.y() * self.image_label.height() / self.miniature_view.height()
+            image_size = self.image_label.pixmap().size()
+            x_ratio = rect.x() / self.miniature_view.width()
+            y_ratio = rect.y() / self.miniature_view.height()
+
+            x = x_ratio * image_size.width() * self.image_label.scale_factor
+            y = y_ratio * image_size.height() * self.image_label.scale_factor
+
             self.image_scroll_area.horizontalScrollBar().setValue(int(x))
             self.image_scroll_area.verticalScrollBar().setValue(int(y))
 
     def save_yolo(self):
         if not self.current_image:
-            return  # Silently return if there's no current image
+            return
 
         image_path = os.path.join(self.current_directory, self.current_image)
         txt_path = os.path.splitext(image_path)[0] + '.txt'
@@ -1264,7 +1516,6 @@ class ImageBrowser(QMainWindow):
                 if shape.label and shape.label in self.classes:
                     class_id = self.classes[shape.label]
                 else:
-                    # Use -1 as class_id for unclassified shapes
                     class_id = -1
 
                 if shape.type == 'box':
@@ -1287,10 +1538,15 @@ class ImageBrowser(QMainWindow):
             model_path = model_selector.get_model_path()
             if model_path:
                 self.loadYOLOModel(model_path)
-                # Update settings
                 self.settings['yoloModelPath'] = model_path
                 with open('config.yaml', 'w') as f:
                     yaml.dump(self.settings, f)
+
+    def show_status_message(self, message):
+        if hasattr(self, 'status_bar'):
+            self.status_bar.showMessage(message)
+        else:
+            print(message)
 
     def auto_detect(self):
         if not self.yolo_detector or self.yolo_detector.model is None:
@@ -1302,19 +1558,18 @@ class ImageBrowser(QMainWindow):
 
         image_path = os.path.join(self.current_directory, self.current_image)
         try:
+            self.show_status_message("Detecting objects...")
             results = self.yolo_detector.detect(image_path)
+            self.show_status_message("Detection complete")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Detection failed: {str(e)}")
             return
 
-        # Clear existing shapes before adding new ones
         self.image_label.shapes = []
 
-        # Process only the first result (assuming single image input)
         if results and len(results) > 0:
             result = results[0]
 
-            # Handle bounding boxes
             if result.boxes:
                 for box in result.boxes:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
@@ -1324,13 +1579,11 @@ class ImageBrowser(QMainWindow):
                     shape.label = label
                     self.image_label.shapes.append(shape)
 
-            # Handle segmentation masks
             if hasattr(result, 'masks') and result.masks is not None:
                 for mask in result.masks:
-                    # Check if the mask has a valid shape
                     if mask.xy and len(mask.xy) > 0:
                         polygon = mask.xy[0].tolist()
-                        if len(polygon) > 2:  # Ensure we have at least 3 points for a valid polygon
+                        if len(polygon) > 2:
                             points = [QPointF(x, y) for x, y in polygon]
                             class_id = int(mask.cls) if hasattr(mask, 'cls') else 0
                             label = result.names[class_id]
@@ -1343,6 +1596,7 @@ class ImageBrowser(QMainWindow):
             self.image_label.update()
             self.update_classes(result.names)
             self.update_shapes()
+            self.update_shape_list()
         else:
             QMessageBox.information(self, "Info", "No detections found.")
 
@@ -1358,14 +1612,11 @@ class ImageBrowser(QMainWindow):
             with open(yaml_path, 'r') as f:
                 data = yaml.safe_load(f)
                 if 'names' in data:
-                    # Handle both list and individual item formats
                     names = data['names'] if isinstance(data['names'], list) else data['names'].split(',')
                     self.classes = {name.strip(): i for i, name in enumerate(names)}
                     self.update_classification_list()
-                # Store directory information
                 self.yaml_data = data
         else:
-            # Create default data if no YAML file exists
             self.yaml_data = {
                 'train': '/path/to/train/images',
                 'val': '/path/to/valid/images',
@@ -1377,16 +1628,13 @@ class ImageBrowser(QMainWindow):
     def save_yaml_classes(self):
         yaml_path = os.path.join(self.current_directory, 'data.yaml')
 
-        # Update class information
         self.yaml_data['names'] = list(self.classes.keys())
         self.yaml_data['nc'] = len(self.classes)
 
-        # Add a comment at the top of the file
         yaml_content = "# This config is for running Yolov8 training locally.\n"
 
         with open(yaml_path, 'w') as f:
             f.write(yaml_content)
-            # Custom dumping to ensure 'names' is on a single line
             for key, value in self.yaml_data.items():
                 if key == 'names':
                     f.write(f"names: {value}\n")
@@ -1400,7 +1648,10 @@ class ImageBrowser(QMainWindow):
         image_path = os.path.join(self.current_directory, self.current_image)
         txt_path = os.path.splitext(image_path)[0] + '.txt'
 
+        print(f"Attempting to load YOLO annotations from: {txt_path}")  # Debug print
+
         if not os.path.exists(txt_path):
+            print(f"No annotation file found at {txt_path}")  # Debug print
             return
 
         img_width = self.image_label.pixmap().width()
@@ -1408,6 +1659,8 @@ class ImageBrowser(QMainWindow):
 
         with open(txt_path, 'r') as f:
             lines = f.readlines()
+
+        print(f"Found {len(lines)} annotations in the file")  # Debug print
 
         self.image_label.shapes = []
         for line in lines:
@@ -1426,7 +1679,7 @@ class ImageBrowser(QMainWindow):
                     shape = Shape('box', [QPointF(x1, y1), QPointF(x2, y2)])
                 elif len(data) > 5:  # polygon
                     points = [QPointF(float(data[i])*img_width, float(data[i+1])*img_height)
-                              for i in range(1, len(data), 2)]
+                            for i in range(1, len(data), 2)]
                     shape = Shape('polygon', points)
                 else:
                     print(f"Warning: Skipping invalid line in annotation file: {line}")
@@ -1435,17 +1688,23 @@ class ImageBrowser(QMainWindow):
                 class_name = next((name for name, id in self.classes.items() if id == class_id), str(class_id))
                 shape.label = class_name
                 self.image_label.shapes.append(shape)
+                print(f"Added shape: {shape.type} with label: {shape.label}")  # Debug print
             except Exception as e:
                 print(f"Error processing line in annotation file: {line}")
                 print(f"Error details: {str(e)}")
 
+        print(f"Loaded {len(self.image_label.shapes)} shapes from annotations")  # Debug print
+
         self.image_label.update()
         self.update_classification_list()
+        print("Calling update_shape_list() from load_yolo_annotations")  # Debug print
         self.update_shape_list()
 
     def update_shapes(self):
-        self.update_shape_list()
-        self.image_label.update()
+        if self.shape_list:
+            self.update_shape_list()
+        if self.image_label:
+            self.image_label.update()
 
     def loadSettings(self):
         try:
@@ -1497,6 +1756,7 @@ class ImageBrowser(QMainWindow):
             "Date Created": "date_created"
         }
         self.image_list.setSortRole(role_map[role])
+        self.image_list.sortItems()
 
     def change_sort_order(self, order):
         order_map = {
@@ -1504,6 +1764,7 @@ class ImageBrowser(QMainWindow):
             "Descending": Qt.SortOrder.DescendingOrder
         }
         self.image_list.setSortOrder(order_map[order])
+        self.image_list.sortItems()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Delete:
@@ -1516,12 +1777,27 @@ class ImageBrowser(QMainWindow):
             self.image_label.shapes.remove(self.image_label.selected_shape)
             self.image_label.selected_shape = None
             self.image_label.update()
-            self.update_shapes()
-            if self.settings.get('autosave', False):
-                self.save_yolo()
+            self.image_label.shapes_changed.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Delete:
+            if self.image_label.selected_points:
+                self.image_label.delete_selected_points()
+            elif self.image_label.selected_shape:
+                self.delete_selected_shape()
+        super().keyPressEvent(event)
+
+    def on_points_deleted(self):
+        self.update_shapes()
+        if self.settings.get('autosave', False):
+            self.save_yolo()
 
 if __name__ == '__main__':
+    print("Starting application")
     app = QApplication(sys.argv)
+    print("QApplication created")
     ex = ImageBrowser()
+    print("ImageBrowser instance created")
     ex.show()
+    print("ImageBrowser shown")
     sys.exit(app.exec())
