@@ -2,6 +2,7 @@ import sys
 import os
 import yaml
 import torch
+import json
 from ultralytics import YOLO
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QListWidget, QHBoxLayout, QWidget, QLabel,
                              QVBoxLayout, QToolBar, QStatusBar, QListView, QPushButton, QSplitter, QMessageBox,
@@ -917,6 +918,7 @@ class ImageBrowser(QMainWindow):
     def __init__(self):
         super().__init__()
         self.dock_widgets = {}
+        self.view_actions = {}
         increase_image_allocation_limit()
         self.current_directory = ""
         self.current_image = ""
@@ -939,12 +941,25 @@ class ImageBrowser(QMainWindow):
         self.dir_label = None
         self.file_label = None
 
+        # Workspace layout feature
+        self.area_to_int = {
+            Qt.DockWidgetArea.LeftDockWidgetArea: 1,
+            Qt.DockWidgetArea.RightDockWidgetArea: 2,
+            Qt.DockWidgetArea.TopDockWidgetArea: 4,
+            Qt.DockWidgetArea.BottomDockWidgetArea: 8,
+            Qt.DockWidgetArea.AllDockWidgetAreas: 15,
+            Qt.DockWidgetArea.NoDockWidgetArea: 0
+        }
+        self.int_to_area = {v: k for k, v in self.area_to_int.items()}
+        self.workspaces = {"Default": self.get_default_layout()}
+        self.load_workspaces()
+
         self.loadSettings()
         self.initUI()
         self.setupConnections()
 
-        print("ImageBrowser initialization complete")  # Debug print
-        print(f"self.shape_list exists: {hasattr(self, 'shape_list')}")  # Debug print
+        print("ImageBrowser initialization complete")
+        print(f"self.shape_list exists: {hasattr(self, 'shape_list')}")
 
     def initUI(self):
         self.setWindowTitle('Modern Image Annotator')
@@ -985,6 +1000,7 @@ class ImageBrowser(QMainWindow):
         # Add View menu
         view_menu = menubar.addMenu('View')
         self.create_view_menu(view_menu)
+        self.create_workspaces_menu()
 
     def on_resize(self, event):
         super().resizeEvent(event)
@@ -1000,11 +1016,16 @@ class ImageBrowser(QMainWindow):
         for name, dock_widget in self.dock_widgets.items():
             action = self.create_dock_toggle_action(name, dock_widget)
             view_menu.addAction(action)
+            self.view_actions[name] = action  # Store the action in the dictionary
 
     def create_dock_toggle_action(self, name, dock_widget):
         action = QAction(name, self, checkable=True)
         action.setChecked(dock_widget.isVisible())
-        action.triggered.connect(lambda checked: self.toggle_dock_visibility(dock_widget, checked))
+        action.triggered.connect(lambda checked, dw=dock_widget: self.toggle_dock_visibility(dw, checked))
+
+        # Connect the dock widget's visibilityChanged signal to update the action
+        dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
+
         return action
 
     def toggle_dock_visibility(self, dock_widget, visible):
@@ -1327,7 +1348,136 @@ class ImageBrowser(QMainWindow):
         self.image_list.sortItems()
         self.image_loader = None
 
+    def create_workspaces_menu(self):
+        menubar = self.menuBar()
+        self.workspaces_menu = menubar.addMenu('Workspaces')
+        self.update_workspaces_menu()
+
+    def update_workspaces_menu(self):
+        self.workspaces_menu.clear()
+        save_action = self.workspaces_menu.addAction('Save current workspace')
+        save_action.triggered.connect(self.save_current_workspace)
+        self.workspaces_menu.addSeparator()
+
+        for workspace_name in self.workspaces.keys():
+            action = self.workspaces_menu.addAction(workspace_name)
+            action.triggered.connect(lambda checked, name=workspace_name: self.load_workspace(name))
+
+    def save_current_workspace(self):
+        name, ok = QInputDialog.getText(self, 'Save Workspace', 'Enter workspace name:')
+        if ok and name:
+            if name in self.workspaces:
+                confirm = QMessageBox.question(self, 'Confirm Overwrite', f'Workspace "{name}" already exists. Overwrite?',
+                                               QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if confirm == QMessageBox.StandardButton.No:
+                    return
+            self.workspaces[name] = self.get_current_layout()
+            self.save_workspaces()
+            self.update_workspaces_menu()
+
+    def load_workspace(self, name):
+        if name in self.workspaces:
+            self.apply_layout(self.workspaces[name])
+
+            # Reset dock widths for the "Default" workspace
+            if name == "Default":
+                default_left_width = 250  # Default width for left pane
+                default_right_width = 300  # Default width for right pane
+
+                # Reset left dock width
+                if "Image Browser" in self.dock_widgets:
+                    self.resizeDocks([self.dock_widgets["Image Browser"]], [default_left_width], Qt.Orientation.Horizontal)
+
+                # Reset right dock widths
+                right_docks = ["Miniature View", "Classifications", "Shapes"]
+                for dock_name in right_docks:
+                    if dock_name in self.dock_widgets:
+                        self.resizeDocks([self.dock_widgets[dock_name]], [default_right_width], Qt.Orientation.Horizontal)
+        else:
+            QMessageBox.warning(self, 'Warning', f'Workspace "{name}" not found.')
+
+    def get_current_layout(self):
+        layout = {}
+        for name, dock in self.dock_widgets.items():
+            area = self.dockWidgetArea(dock)
+            layout[name] = {
+                'area': self.area_to_int.get(area, 0),
+                'floating': dock.isFloating(),
+                'geometry': dock.geometry().getRect() if dock.isFloating() else None,
+                'visible': dock.isVisible(),
+                'size': {
+                    'width': dock.width(),
+                    'height': dock.height()
+                }
+            }
+
+        # Save main window size
+        layout['main_window'] = {
+            'size': {
+                'width': self.width(),
+                'height': self.height()
+            }
+        }
+
+        return layout
+
+    def get_default_layout(self):
+        default_left_width = 250  # Default width for left pane
+        default_right_width = 300  # Default width for right pane
+        default_height = 300  # Default height for all panes
+
+        return {
+            "Image Browser": {'area': self.area_to_int[Qt.DockWidgetArea.LeftDockWidgetArea], 'floating': False, 'geometry': None, 'visible': True, 'size': {'width': default_left_width, 'height': default_height}},
+            "Miniature View": {'area': self.area_to_int[Qt.DockWidgetArea.RightDockWidgetArea], 'floating': False, 'geometry': None, 'visible': True, 'size': {'width': default_right_width, 'height': default_height}},
+            "Classifications": {'area': self.area_to_int[Qt.DockWidgetArea.RightDockWidgetArea], 'floating': False, 'geometry': None, 'visible': True, 'size': {'width': default_right_width, 'height': default_height}},
+            "Shapes": {'area': self.area_to_int[Qt.DockWidgetArea.RightDockWidgetArea], 'floating': False, 'geometry': None, 'visible': True, 'size': {'width': default_right_width, 'height': default_height}},
+            "main_window": {'size': {'width': 1200, 'height': 800}}  # Default main window size
+        }
+
+    def apply_layout(self, layout):
+        if 'main_window' in layout and 'size' in layout['main_window']:
+            self.resize(layout['main_window']['size']['width'], layout['main_window']['size']['height'])
+
+        for name, settings in layout.items():
+            if name == 'main_window':
+                continue
+            if name in self.dock_widgets:
+                dock = self.dock_widgets[name]
+                area = self.int_to_area.get(settings.get('area', 0), Qt.DockWidgetArea.NoDockWidgetArea)
+                self.addDockWidget(area, dock)
+                dock.setFloating(settings.get('floating', False))
+                if settings.get('floating') and settings.get('geometry'):
+                    dock.setGeometry(*settings['geometry'])
+                elif 'size' in settings:
+                    dock.resize(settings['size']['width'], settings['size']['height'])
+                dock.setVisible(settings.get('visible', True))
+
+        # Adjust dock widget sizes after all docks are added
+        for name, settings in layout.items():
+            if name == 'main_window':
+                continue
+            if name in self.dock_widgets and 'size' in settings:
+                dock = self.dock_widgets[name]
+                area = self.int_to_area.get(settings.get('area', 0), Qt.DockWidgetArea.NoDockWidgetArea)
+                if area in [Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea]:
+                    self.resizeDocks([dock], [settings['size']['width']], Qt.Orientation.Horizontal)
+                elif area in [Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea]:
+                    self.resizeDocks([dock], [settings['size']['height']], Qt.Orientation.Vertical)
+
+    def save_workspaces(self):
+        with open('workspaces.yaml', 'w') as f:
+            yaml.dump(self.workspaces, f)
+
+    def load_workspaces(self):
+        try:
+            with open('workspaces.yaml', 'r') as f:
+                self.workspaces = yaml.safe_load(f)
+        except FileNotFoundError:
+            self.workspaces = {"Default": self.get_default_layout()}
+
+
     def closeEvent(self, event):
+        self.save_workspaces()
         if self.image_loader:
             self.image_loader.stop()
             self.image_loader.wait()
