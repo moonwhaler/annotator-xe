@@ -130,7 +130,8 @@ class DrawingArea(QLabel):
         self.scroll_area = scroll_area
 
     def set_scale_factor(self, factor):
-        self.scale_factor = factor
+        # Restrict zoom level between -500% and +500%
+        self.scale_factor = max(min(factor, 5.0), 0.2)  # 0.2 is -500%, 5.0 is +500%
         self.update_scaled_pixmap()
         self.update()
         self.zoom_changed.emit(self.scale_factor)
@@ -145,64 +146,92 @@ class DrawingArea(QLabel):
             )
             self.setFixedSize(self.scaled_pixmap.size())
 
+    def wheelEvent(self, event):
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            zoom_factor = 1.1 if delta > 0 else 1 / 1.1
+
+            # Calculate the position of the cursor relative to the widget
+            cursor_pos = event.position()
+            relative_pos = QPointF(cursor_pos.x() / self.width(), cursor_pos.y() / self.height())
+
+            # Apply zoom
+            new_scale = self.scale_factor * zoom_factor
+            self.set_scale_factor(new_scale)
+
+            # Adjust scroll position to keep the point under the cursor fixed
+            scroll_area = self.parent().parent()  # Assuming the structure: ScrollArea -> Viewport -> DrawingArea
+            viewport_size = scroll_area.viewport().size()
+            new_scroll_x = int(cursor_pos.x() * zoom_factor - viewport_size.width() * relative_pos.x())
+            new_scroll_y = int(cursor_pos.y() * zoom_factor - viewport_size.height() * relative_pos.y())
+
+            scroll_area.horizontalScrollBar().setValue(new_scroll_x)
+            scroll_area.verticalScrollBar().setValue(new_scroll_y)
+
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
     def mousePressEvent(self, event):
         self.setFocus()
-        pos = self.transform_pos(event.position())
+        pos = event.position()
+        transformed_pos = self.transform_pos(pos)
 
         if event.button() == Qt.MouseButton.RightButton:
             self.finish_drawing()
             return
 
         if self.panning:
-            self.pan_start = event.position().toPoint()
+            self.pan_start = pos.toPoint()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             return
 
         if self.current_tool == 'polygon':
             if not self.drawing:
                 if self.hover_edge:
-                    self.insert_point_to_polygon(pos)
+                    self.insert_point_to_polygon(transformed_pos)
                 else:
                     self.drawing = True
-                    self.current_shape = Shape('polygon', [pos])
+                    self.current_shape = Shape('polygon', [transformed_pos])
             else:
-                self.current_shape.points.append(pos)
+                self.current_shape.points.append(transformed_pos)
         elif self.current_tool == 'select':
-            self.handle_select_tool(pos, event)
+            self.handle_select_tool(transformed_pos, event)
         elif self.current_tool == 'move':
-            self.handle_move_tool(pos)
+            self.handle_move_tool(transformed_pos)
         elif self.current_tool == 'box':
             self.drawing = True
-            self.start_point = pos
+            self.start_point = transformed_pos
             self.current_shape = Shape('box', [self.start_point, self.start_point])
         self.update()
 
     def mouseMoveEvent(self, event):
-        pos = self.transform_pos(event.position())
+        pos = event.position()
+        transformed_pos = self.transform_pos(pos)
         if self.panning:
-            delta = event.position().toPoint() - self.pan_start
+            delta = pos.toPoint() - self.pan_start
             self.scroll_area.horizontalScrollBar().setValue(
                 self.scroll_area.horizontalScrollBar().value() - delta.x())
             self.scroll_area.verticalScrollBar().setValue(
                 self.scroll_area.verticalScrollBar().value() - delta.y())
-            self.pan_start = event.position().toPoint()
+            self.pan_start = pos.toPoint()
             self.update_minimap()
             return
 
         if self.drawing:
             if self.current_tool == 'box':
-                self.current_shape.points[1] = pos
+                self.current_shape.points[1] = transformed_pos
             elif self.current_tool == 'polygon':
                 if len(self.current_shape.points) > 0:
-                    self.current_shape.points[-1] = pos
+                    self.current_shape.points[-1] = transformed_pos
         elif self.current_tool == 'select':
             if self.resize_handle:
-                self.resize_box(pos)
+                self.resize_box(transformed_pos)
             elif self.moving_point:
-                self.move_polygon_point(pos)
+                self.move_polygon_point(transformed_pos)
             elif self.moving_shape:
-                self.move_shape(pos)
-        self.update_hover(pos)
+                self.move_shape(transformed_pos)
+        self.update_hover(transformed_pos)
         self.update()
 
     def mouseReleaseEvent(self, event):
@@ -328,6 +357,9 @@ class DrawingArea(QLabel):
     def transform_pos(self, pos):
         return QPointF(pos.x() / self.scale_factor, pos.y() / self.scale_factor)
 
+    def inverse_transform_pos(self, pos):
+        return QPointF(pos.x() * self.scale_factor, pos.y() * self.scale_factor)
+
     def update_hover(self, pos):
         self.hover_point = None
         self.hover_edge = None
@@ -427,7 +459,7 @@ class DrawingArea(QLabel):
                 self.moving_shape = True
                 shape.selected = True
                 self.selected_shape = shape
-                self.move_start_point = pos
+                self.move_start_point = self.inverse_transform_pos(pos)
                 return
 
         self.selected_shape = None
@@ -438,14 +470,14 @@ class DrawingArea(QLabel):
             if self.shape_contains_point(shape, pos):
                 self.selected_shape = shape
                 self.moving_shape = True
-                self.move_start_point = pos
+                self.move_start_point = self.inverse_transform_pos(pos)
                 break
 
     def move_shape(self, pos):
         if self.selected_shape and self.move_start_point != QPointF():
-            delta = (pos - self.move_start_point) / self.scale_factor
+            delta = pos - self.transform_pos(self.move_start_point)
             self.selected_shape.move_by(delta)
-            self.move_start_point = pos
+            self.move_start_point = self.inverse_transform_pos(pos)
             self.update()
 
     def get_resize_handle(self, shape, pos):
@@ -476,9 +508,8 @@ class DrawingArea(QLabel):
     def move_polygon_point(self, pos):
         if self.moving_point and self.selected_shape:
             index = self.selected_shape.points.index(self.moving_point)
-            new_pos = pos / self.scale_factor
-            self.selected_shape.move_point(index, new_pos)
-            self.moving_point = new_pos
+            self.selected_shape.move_point(index, pos)
+            self.moving_point = pos
 
             # Update selected_points if the moved point is in the selection
             self.selected_points = [(shape, i) if shape != self.selected_shape or i != index
@@ -490,7 +521,8 @@ class DrawingArea(QLabel):
 
     def shape_contains_point(self, shape, point):
         if shape.type == 'box':
-            return QRectF(shape.points[0], shape.points[1]).normalized().contains(point)
+            rect = QRectF(shape.points[0], shape.points[1]).normalized()
+            return rect.contains(point)
         elif shape.type == 'polygon':
             path = QPainterPath()
             path.addPolygon(QPolygonF(shape.points))
@@ -643,6 +675,8 @@ class MiniatureView(QLabel):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_scaled_pixmap()
+        # Set minimum height to current width
+        self.setMinimumHeight(self.width())
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -956,9 +990,11 @@ class ImageBrowser(QMainWindow):
         super().resizeEvent(event)
         self.update_minimap_view_rect()
 
-    def on_miniature_view_resize(self, event):
-        self.miniature_view.update_scaled_pixmap()
-        self.update_minimap_view_rect()
+    def on_miniature_dock_resize(self, event):
+        # Update the minimum height of the miniature view to match the dock's width
+        self.miniature_view.setMinimumHeight(self.dock_widgets["Miniature View"].width())
+        # Call the original resizeEvent
+        QDockWidget.resizeEvent(self.dock_widgets["Miniature View"], event)
 
     def create_view_menu(self, view_menu):
         for name, dock_widget in self.dock_widgets.items():
@@ -1012,7 +1048,7 @@ class ImageBrowser(QMainWindow):
         self.resizeEvent = self.on_resize
 
         # Connect miniature view resize event
-        self.miniature_view.resizeEvent = self.on_miniature_view_resize
+        self.miniature_view.resizeEvent = self.on_miniature_dock_resize
 
         self.image_label.points_deleted.connect(self.on_points_deleted)
 
@@ -1046,6 +1082,9 @@ class ImageBrowser(QMainWindow):
 
         self.dock_widgets["Miniature View"].setWidget(miniature_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["Miniature View"])
+
+        # Connect the dock widget's resizeEvent to update the miniature view's minimum height
+        self.dock_widgets["Miniature View"].resizeEvent = self.on_miniature_dock_resize
 
         # Classification List Dock
         self.dock_widgets["Classifications"] = QDockWidget("Classifications", self)
@@ -1181,14 +1220,14 @@ class ImageBrowser(QMainWindow):
         zoom_layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins for a more compact layout
 
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
-        self.zoom_slider.setRange(10, 300)  # 10% to 300% zoom
+        self.zoom_slider.setRange(20, 500)  # 20% to 500% zoom
         self.zoom_slider.setValue(100)
         self.zoom_slider.valueChanged.connect(self.zoom_image)
 
         self.zoom_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.zoom_slider.setTickInterval(10)  # Minor ticks every 10%
 
-        for value in [10, 50, 100, 200, 300]:
+        for value in [20, 50, 100, 200, 500]:
             self.zoom_slider.setTickPosition(QSlider.TickPosition.TicksBothSides)
             self.zoom_slider.setPageStep(value)
 
