@@ -978,7 +978,7 @@ class ImageBrowser(QMainWindow):
         print(f"self.shape_list exists: {hasattr(self, 'shape_list')}")
 
     def initUI(self):
-        self.setWindowTitle('Modern Image Annotator')
+        self.setWindowTitle('Annotator XE')
         self.setGeometry(100, 100, 1200, 800)
 
         # Create central widget
@@ -1060,8 +1060,8 @@ class ImageBrowser(QMainWindow):
         info_menu.addAction(about_action)
 
     def show_about_dialog(self):
-        QMessageBox.about(self, "About Modern Image Annotator",
-                          "Modern Image Annotator\nVersion 1.0\n\nA powerful tool for image annotation and YOLO format generation.")
+        QMessageBox.about(self, "About Annotator XE",
+                          "Annotator XE\nVersion 0.5\n\nA powerful tool for image annotation and YOLO format generation.")
 
     def on_resize(self, event):
         super().resizeEvent(event)
