@@ -2,7 +2,6 @@ import sys
 import os
 import yaml
 import torch
-import json
 from ultralytics import YOLO
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QListWidget, QHBoxLayout, QWidget, QLabel,
                              QVBoxLayout, QToolBar, QStatusBar, QListView, QPushButton, QSplitter, QMessageBox,
@@ -721,11 +720,13 @@ class MiniatureView(QLabel):
         self.update()
 
 class ImageListItem(QListWidgetItem):
-    def __init__(self, text, icon, file_path):
-        super().__init__(icon, text)
+    def __init__(self, icon, file_path):
+        super().__init__(icon, "")  # Remove the text (filename) from the item
         self.file_path = file_path
         self.file_info = QFileInfo(file_path)
-        self.setSizeHint(QSize(100, 100))
+        self.setSizeHint(QSize(100, 100))  # Set a fixed size for the item
+        self.has_annotation = self.check_annotation_exists()
+        self.hidden = False
 
     def __lt__(self, other):
         if not isinstance(other, ImageListItem):
@@ -733,7 +734,7 @@ class ImageListItem(QListWidgetItem):
 
         sort_role = self.listWidget().sort_role
         if sort_role == "name":
-            return self.text().lower() < other.text().lower()
+            return self.file_info.fileName().lower() < other.file_info.fileName().lower()
         elif sort_role == "date_modified":
             return self.file_info.lastModified() < other.file_info.lastModified()
         elif sort_role == "date_created":
@@ -741,11 +742,26 @@ class ImageListItem(QListWidgetItem):
         else:
             return super().__lt__(other)
 
+    def check_annotation_exists(self):
+        txt_path = os.path.splitext(self.file_path)[0] + '.txt'
+        return os.path.exists(txt_path)
+
+    def setHidden(self, hidden):
+        self.hidden = hidden
+        self.setFlags(self.flags() & ~Qt.ItemFlag.ItemIsEnabled if hidden else self.flags() | Qt.ItemFlag.ItemIsEnabled)
+
+    def isHidden(self):
+        return self.hidden
+
 class SortableImageList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.sort_role = "name"
         self.sort_order = Qt.SortOrder.AscendingOrder
+        self.setViewMode(QListWidget.ViewMode.IconMode)
+        self.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.setWrapping(True)
+        self.setSpacing(10)  # Add spacing between items
 
     def setSortRole(self, role):
         self.sort_role = role
@@ -987,6 +1003,10 @@ class ImageBrowser(QMainWindow):
         self.status_bar.addPermanentWidget(self.dir_label)
         self.file_label = QLabel()
         self.status_bar.addPermanentWidget(self.file_label)
+        self.image_count_label = QLabel()
+        self.status_bar.addPermanentWidget(self.image_count_label)
+        self.tagged_count_label = QLabel()
+        self.status_bar.addPermanentWidget(self.tagged_count_label)
 
         # Create dock widgets
         self.create_dock_widgets()
@@ -997,10 +1017,51 @@ class ImageBrowser(QMainWindow):
         # Create menu bar
         menubar = self.menuBar()
 
+        # Add File menu
+        file_menu = menubar.addMenu('File')
+        self.create_file_menu(file_menu)
+
+        # Add Settings menu
+        settings_menu = menubar.addMenu('Settings')
+        self.create_settings_menu(settings_menu)
+
         # Add View menu
         view_menu = menubar.addMenu('View')
         self.create_view_menu(view_menu)
+
+        # Add workspace menu
         self.create_workspaces_menu()
+
+        # Add Info menu
+        info_menu = menubar.addMenu('Info')
+        self.create_info_menu(info_menu)
+
+    def create_file_menu(self, file_menu):
+        open_action = QAction('Open Directory', self)
+        open_action.triggered.connect(self.open_directory)
+        file_menu.addAction(open_action)
+
+        save_action = QAction('Save YOLO', self)
+        save_action.triggered.connect(self.save_yolo)
+        file_menu.addAction(save_action)
+
+        exit_action = QAction('Exit', self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+    def create_settings_menu(self, settings_menu):
+        settings_action = QAction('Open Settings', self)
+        settings_action.triggered.connect(self.openSettings)
+        settings_menu.addAction(settings_action)
+
+    def create_info_menu(self, info_menu):
+        about_action = QAction('About', self)
+        about_action.triggered.connect(self.show_about_dialog)
+        info_menu.addAction(about_action)
+
+    def show_about_dialog(self):
+        QMessageBox.about(self, "About Modern Image Annotator",
+                          "Modern Image Annotator\nVersion 1.0\n\nA powerful tool for image annotation and YOLO format generation.")
 
     def on_resize(self, event):
         super().resizeEvent(event)
@@ -1072,6 +1133,7 @@ class ImageBrowser(QMainWindow):
         self.miniature_view.resizeEvent = self.on_miniature_dock_resize
 
         self.image_label.points_deleted.connect(self.on_points_deleted)
+        self.hide_tagged_checkbox.stateChanged.connect(self.toggle_tagged_images)
 
     def on_shape_created(self):
         print("New shape created")  # Debug print
@@ -1163,6 +1225,11 @@ class ImageBrowser(QMainWindow):
         self.image_list.setIconSize(QSize(80, 80))
         self.image_list.itemClicked.connect(self.display_image)
         left_layout.addWidget(self.image_list)
+
+        # Add "Hide tagged images" checkbox
+        self.hide_tagged_checkbox = QCheckBox("Gray out tagged images")
+        self.hide_tagged_checkbox.stateChanged.connect(self.toggle_tagged_images)
+        left_layout.addWidget(self.hide_tagged_checkbox)
 
         return left_pane
 
@@ -1322,6 +1389,7 @@ class ImageBrowser(QMainWindow):
         self.miniature_view.clear()
         self.miniature_view.set_view_rect(QRectF())
         self.reset_zoom()
+        self.hide_tagged_checkbox.setChecked(False)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1340,13 +1408,57 @@ class ImageBrowser(QMainWindow):
 
     def add_image_to_list(self, filename, icon):
         file_path = os.path.join(self.current_directory, filename)
-        item = ImageListItem(filename, icon, file_path)
+        item = ImageListItem(icon, file_path)
+
+        # Add green mark if annotation exists
+        if item.has_annotation:
+            marked_icon = self.add_green_mark(icon)
+            item.setIcon(marked_icon)
+
+        # Apply "Hide tagged images" filter
+        if self.hide_tagged_checkbox.isChecked() and item.has_annotation:
+            item.setHidden(True)
+
         self.image_list.addItem(item)
+
+    def toggle_tagged_images(self):
+        for index in range(self.image_list.count()):
+            item = self.image_list.item(index)
+            if isinstance(item, ImageListItem):
+                if self.hide_tagged_checkbox.isChecked():
+                    item.setHidden(item.has_annotation)
+                else:
+                    item.setHidden(False)
+
+    def add_green_mark(self, icon):
+        pixmap = icon.pixmap(80, 80)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw a small green circle at the bottom right corner
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 255, 0, 200))  # Semi-transparent green
+        painter.drawEllipse(pixmap.width() - 15, pixmap.height() - 15, 10, 10)
+
+        painter.end()
+        return QIcon(pixmap)
 
     def image_loading_finished(self):
         self.show_status_message("Image loading complete")
         self.image_list.sortItems()
         self.image_loader = None
+
+        # Count total images and tagged images
+        total_images = self.image_list.count()
+        tagged_images = sum(1 for index in range(total_images)
+                            if isinstance(self.image_list.item(index), ImageListItem)
+                            and self.image_list.item(index).has_annotation)
+
+        # Update the image count labels
+        if hasattr(self, 'image_count_label'):
+            self.image_count_label.setText(f"Total Images: {total_images}")
+        if hasattr(self, 'tagged_count_label'):
+            self.tagged_count_label.setText(f"Tagged Images: {tagged_images}")
 
     def create_workspaces_menu(self):
         menubar = self.menuBar()
@@ -1465,16 +1577,40 @@ class ImageBrowser(QMainWindow):
                     self.resizeDocks([dock], [settings['size']['height']], Qt.Orientation.Vertical)
 
     def save_workspaces(self):
+        serializable_workspaces = {}
+        for name, layout in self.workspaces.items():
+            serializable_layout = {}
+            for key, value in layout.items():
+                if isinstance(value, dict) and 'area' in value:
+                    # Convert area to int for serialization using area_to_int dictionary
+                    value = value.copy()  # Create a copy to avoid modifying the original
+                    value['area'] = self.area_to_int.get(value['area'], 0)
+                serializable_layout[key] = value
+            serializable_workspaces[name] = serializable_layout
+
         with open('workspaces.yaml', 'w') as f:
-            yaml.dump(self.workspaces, f)
+            yaml.dump(serializable_workspaces, f)
 
     def load_workspaces(self):
         try:
             with open('workspaces.yaml', 'r') as f:
-                self.workspaces = yaml.safe_load(f)
+                loaded_workspaces = yaml.safe_load(f)
+
+            self.workspaces = {}
+            for name, layout in loaded_workspaces.items():
+                processed_layout = {}
+                for key, value in layout.items():
+                    if isinstance(value, dict) and 'area' in value:
+                        # Convert area back to Qt.DockWidgetArea
+                        value['area'] = self.int_to_area.get(value['area'], Qt.DockWidgetArea.NoDockWidgetArea)
+                    processed_layout[key] = value
+                self.workspaces[name] = processed_layout
+
         except FileNotFoundError:
             self.workspaces = {"Default": self.get_default_layout()}
-
+        except yaml.YAMLError as e:
+            print(f"Error loading workspaces: {e}")
+            self.workspaces = {"Default": self.get_default_layout()}
 
     def closeEvent(self, event):
         self.save_workspaces()
@@ -1490,8 +1626,8 @@ class ImageBrowser(QMainWindow):
         if self.settings.get('autosave', False) and self.current_image:
             self.save_yolo()
 
-        self.current_image = item.text()
-        image_path = os.path.join(self.current_directory, self.current_image)
+        self.current_image = os.path.basename(item.file_path)
+        image_path = item.file_path
         print(f"Attempting to display image: {image_path}")
         try:
             pixmap = QPixmap(image_path)
@@ -1589,6 +1725,11 @@ class ImageBrowser(QMainWindow):
                     label = shape.label if shape.label and shape.label != '-1' else "Unlabeled"
                     item = QListWidgetItem(f"{shape_type} {i+1}: {label}")
                     item.setData(Qt.ItemDataRole.UserRole, i)
+
+                    # Set the item color to grey if it's unlabeled
+                    if label == "Unlabeled":
+                        item.setForeground(QColor(128, 128, 128))  # Grey color
+
                     self.shape_list.addItem(item)
                     print(f"Added item to shape list: {shape_type} {i+1}: {label}")
             else:
@@ -1697,6 +1838,15 @@ class ImageBrowser(QMainWindow):
         image_path = os.path.join(self.current_directory, self.current_image)
         txt_path = os.path.splitext(image_path)[0] + '.txt'
 
+        had_annotation = os.path.exists(txt_path)
+
+        if not self.image_label.shapes:
+            # If there are no shapes and the file exists, delete it
+            if had_annotation:
+                os.remove(txt_path)
+            self.update_image_list_item(self.current_image, False)
+            return  # Exit the method early as there's nothing to save
+
         img_width = self.image_label.pixmap().width()
         img_height = self.image_label.pixmap().height()
 
@@ -1720,6 +1870,38 @@ class ImageBrowser(QMainWindow):
                     f.write(f"{class_id} {' '.join(points)}\n")
 
         self.save_yaml_classes()
+        self.update_image_list_item(self.current_image, True)
+
+    def update_image_list_item(self, image_name, has_annotation):
+        for i in range(self.image_list.count()):
+            item = self.image_list.item(i)
+            if isinstance(item, ImageListItem) and os.path.basename(item.file_path) == image_name:
+                if item.has_annotation != has_annotation:
+                    item.has_annotation = has_annotation
+
+                    # Get the original icon without any marks
+                    original_icon = QIcon(QPixmap(item.file_path).scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+                    # Update the icon
+                    if has_annotation:
+                        marked_icon = self.add_green_mark(original_icon)
+                        item.setIcon(marked_icon)
+                    else:
+                        item.setIcon(original_icon)
+
+                    # Update visibility based on the "Hide tagged images" checkbox
+                    if self.hide_tagged_checkbox.isChecked():
+                        item.setHidden(has_annotation)
+                    else:
+                        item.setHidden(False)
+
+                break
+
+        # Update the tagged image count
+        tagged_images = sum(1 for index in range(self.image_list.count())
+                            if isinstance(self.image_list.item(index), ImageListItem)
+                            and self.image_list.item(index).has_annotation)
+        self.tagged_count_label.setText(f"Tagged Images: {tagged_images}")
 
     def select_model(self):
         model_selector = ModelSelector(self)
@@ -1967,6 +2149,9 @@ class ImageBrowser(QMainWindow):
             self.image_label.selected_shape = None
             self.image_label.update()
             self.image_label.shapes_changed.emit()
+
+            if self.settings.get('autosave', False):
+                self.save_yolo()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Delete:
