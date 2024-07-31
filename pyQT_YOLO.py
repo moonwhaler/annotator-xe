@@ -1190,13 +1190,34 @@ class ImageBrowser(QMainWindow):
         # Shape List Dock
         self.dock_widgets["Shapes"] = QDockWidget("Shapes", self)
         self.dock_widgets["Shapes"].setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        shapes_widget = QWidget()
+        shapes_layout = QVBoxLayout(shapes_widget)
         self.shape_list = QListWidget()
         print("Shape list created")  # Debug print
         self.shape_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.shape_list.itemSelectionChanged.connect(self.select_shape_from_list)
-        self.dock_widgets["Shapes"].setWidget(self.shape_list)
+        shapes_layout.addWidget(self.shape_list)
+
+        # Add delete button
+        delete_shape_button = QPushButton("Delete selected shape")
+        delete_shape_button.clicked.connect(self.delete_selected_shape_from_list)
+        shapes_layout.addWidget(delete_shape_button)
+
+        self.dock_widgets["Shapes"].setWidget(shapes_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["Shapes"])
         print("Shape list dock widget added")  # Debug print
+
+    def delete_selected_shape_from_list(self):
+        selected_items = self.shape_list.selectedItems()
+        if selected_items:
+            shape_index = selected_items[0].data(Qt.ItemDataRole.UserRole)
+            if 0 <= shape_index < len(self.image_label.shapes):
+                del self.image_label.shapes[shape_index]
+                self.image_label.selected_shape = None
+                self.image_label.update()
+                self.update_shapes()
+                if self.settings.get('autosave', False):
+                    self.save_yolo()
 
     def create_left_pane(self):
         left_pane = QWidget()
@@ -1673,6 +1694,7 @@ class ImageBrowser(QMainWindow):
             self.classes[new_class] = len(self.classes)
             self.update_classification_list()
             self.update_shape_labels(old_class, new_class)
+            self.update_shape_list()
 
     def edit_selected_classification(self):
         selected = self.class_list.selectedIndexes()
