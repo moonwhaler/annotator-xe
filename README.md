@@ -1,6 +1,6 @@
-# Modern Image Annotator
+# Annotator XE
 
-Modern Image Annotator is a powerful and user-friendly desktop application for annotating images with bounding boxes and polygons. It's designed to streamline the process of creating datasets for computer vision and machine learning projects, particularly those using the YOLO (You Only Look Once) format.
+Annotator XE is a powerful and user-friendly desktop application for annotating images with bounding boxes and polygons. It's designed to streamline the process of creating datasets for computer vision and machine learning projects, particularly those using the YOLO (You Only Look Once) format.
 
 ![image](https://github.com/user-attachments/assets/22c4cf92-4d6e-4a88-92fd-2c3d5eef2cf7)
 
@@ -48,7 +48,7 @@ Follow these steps to set up the Modern Image Annotator on your local machine:
 
 ## Usage
 
-To start the Modern Image Annotator:
+To start the Annotator XE:
 
 1. Ensure your virtual environment is activated.
 
@@ -67,7 +67,7 @@ To start the Modern Image Annotator:
 
 ## Updating
 
-To update the Modern Image Annotator to the latest version:
+To update the Annotator XE to the latest version:
 
 1. Pull the latest changes from the repository:
    ```
@@ -83,7 +83,7 @@ To update the Modern Image Annotator to the latest version:
 
 ## Contributing
 
-Contributions to the Modern Image Annotator are welcome! Please feel free to submit pull requests, create issues or spread the word.
+Contributions to the Annotator XE are welcome! Please feel free to submit pull requests, create issues or spread the word.
 
 ## License
 
