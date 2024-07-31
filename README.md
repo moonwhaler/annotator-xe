@@ -2,6 +2,8 @@
 
 Modern Image Annotator is a powerful and user-friendly desktop application for annotating images with bounding boxes and polygons. It's designed to streamline the process of creating datasets for computer vision and machine learning projects, particularly those using the YOLO (You Only Look Once) format.
 
+![image](https://github.com/user-attachments/assets/883e6a9d-58c6-49f8-9c3e-56ab0014e207)
+
 ## Features
 
 - **Intuitive Interface**: Easy-to-use GUI for efficient image annotation.
@@ -52,7 +54,7 @@ To start the Modern Image Annotator:
 
 2. Run the main script:
    ```
-   python pyQT5_YOLO.py
+   python pyQT_YOLO.py
    ```
 
 3. Use the "Open Directory" button to select a folder containing your images.
