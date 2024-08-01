@@ -547,6 +547,7 @@ class DrawingArea(QLabel):
     def finish_drawing(self):
         if self.current_shape and self.current_shape.type == 'polygon' and len(self.current_shape.points) > 2:
             self.shapes.append(self.current_shape)
+            self.shape_created.emit()
         self.current_shape = None
         self.drawing = False
         self.update()
@@ -1663,7 +1664,6 @@ class ImageBrowser(QMainWindow):
             self.load_yolo_annotations()
             self.file_label.setText(f"File: {self.current_image}")
             self.update_classification_list()
-            print("Calling update_shape_list() from display_image")  # Debug print
             self.update_shape_list()
             self.update_minimap()
             self.update_minimap_view_rect()
