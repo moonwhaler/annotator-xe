@@ -5,23 +5,262 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QTabWidget, QWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QWidget,
     QLineEdit, QPushButton, QSpinBox, QCheckBox, QDialogButtonBox,
-    QFileDialog, QComboBox, QKeySequenceEdit
+    QFileDialog, QComboBox, QKeySequenceEdit, QListWidget, QListWidgetItem,
+    QStackedWidget, QLabel, QFrame, QSizePolicy, QGroupBox
 )
-from PyQt6.QtGui import QKeySequence
+from PyQt6.QtGui import QKeySequence, QFont
 
 from ...core.config import AppConfig, ConfigManager
 
 logger = logging.getLogger(__name__)
 
+# Modern stylesheet for the settings dialog
+SETTINGS_STYLESHEET = """
+QDialog {
+    background-color: #1e1e1e;
+}
+
+QListWidget {
+    background-color: #252526;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 4px;
+    outline: none;
+}
+
+QListWidget::item {
+    color: #cccccc;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin: 2px 4px;
+}
+
+QListWidget::item:selected {
+    background-color: #0e639c;
+    color: #ffffff;
+}
+
+QListWidget::item:hover:!selected {
+    background-color: #2a2d2e;
+}
+
+QStackedWidget {
+    background-color: transparent;
+}
+
+QGroupBox {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 8px;
+    margin-top: 16px;
+    padding: 16px;
+    padding-top: 32px;
+    font-weight: bold;
+    color: #cccccc;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 16px;
+    padding: 0 8px;
+    color: #cccccc;
+}
+
+QLabel {
+    color: #cccccc;
+}
+
+QLabel[class="description"] {
+    color: #808080;
+    font-size: 11px;
+}
+
+QLabel[class="section-title"] {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+QLineEdit {
+    background-color: #3c3c3c;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #cccccc;
+    selection-background-color: #0e639c;
+}
+
+QLineEdit:focus {
+    border-color: #0e639c;
+}
+
+QLineEdit:disabled {
+    background-color: #2d2d2d;
+    color: #808080;
+}
+
+QSpinBox {
+    background-color: #3c3c3c;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #cccccc;
+    min-width: 80px;
+}
+
+QSpinBox:focus {
+    border-color: #0e639c;
+}
+
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: #4a4a4a;
+    border: none;
+    width: 20px;
+}
+
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background-color: #5a5a5a;
+}
+
+QComboBox {
+    background-color: #3c3c3c;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #cccccc;
+    min-width: 150px;
+}
+
+QComboBox:focus {
+    border-color: #0e639c;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox::down-arrow {
+    image: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #cccccc;
+    margin-right: 8px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #3c3c3c;
+    border: 1px solid #555555;
+    selection-background-color: #0e639c;
+    color: #cccccc;
+}
+
+QPushButton {
+    background-color: #0e639c;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    color: #ffffff;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #1177bb;
+}
+
+QPushButton:pressed {
+    background-color: #0d5a8c;
+}
+
+QPushButton[class="secondary"] {
+    background-color: #3c3c3c;
+    color: #cccccc;
+}
+
+QPushButton[class="secondary"]:hover {
+    background-color: #4a4a4a;
+}
+
+QCheckBox {
+    color: #cccccc;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 2px solid #555555;
+    background-color: #3c3c3c;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #0e639c;
+    border-color: #0e639c;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #0e639c;
+}
+
+QKeySequenceEdit {
+    background-color: #3c3c3c;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #cccccc;
+    min-width: 150px;
+}
+
+QKeySequenceEdit:focus {
+    border-color: #0e639c;
+}
+
+QDialogButtonBox {
+    padding: 16px 0 0 0;
+}
+
+QDialogButtonBox QPushButton {
+    min-width: 80px;
+}
+
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QScrollBar:vertical {
+    background-color: #1e1e1e;
+    width: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #555555;
+    border-radius: 6px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #666666;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+"""
+
 
 class SettingsDialog(QDialog):
     """
-    Settings dialog for configuring application preferences.
+    Modern settings dialog for configuring application preferences.
 
-    Provides tabs for General, YOLO, and UI settings.
+    Uses a sidebar navigation with grouped settings sections.
     """
 
     def __init__(self, parent=None, config_manager: Optional[ConfigManager] = None) -> None:
@@ -39,16 +278,47 @@ class SettingsDialog(QDialog):
     def _init_ui(self) -> None:
         """Initialize the dialog UI."""
         self.setWindowTitle("Settings")
-        self.setGeometry(100, 100, 400, 300)
+        self.setMinimumSize(700, 500)
+        self.resize(750, 550)
+        self.setStyleSheet(SETTINGS_STYLESHEET)
 
-        layout = QVBoxLayout(self)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(16)
 
-        # Tab widget
-        tab_widget = QTabWidget()
-        tab_widget.addTab(self._create_general_tab(), "General")
-        tab_widget.addTab(self._create_yolo_tab(), "YOLO")
-        tab_widget.addTab(self._create_ui_tab(), "UI")
-        layout.addWidget(tab_widget)
+        # Sidebar navigation
+        self.nav_list = QListWidget()
+        self.nav_list.setFixedWidth(160)
+        self.nav_list.setSpacing(2)
+
+        nav_items = [
+            ("General", "general"),
+            ("Appearance", "appearance"),
+            ("Behavior", "behavior"),
+            ("Shortcuts", "shortcuts"),
+        ]
+
+        for label, data in nav_items:
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, data)
+            self.nav_list.addItem(item)
+
+        self.nav_list.setCurrentRow(0)
+        self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+        main_layout.addWidget(self.nav_list)
+
+        # Content area
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+
+        # Stacked widget for pages
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._create_general_page())
+        self.stack.addWidget(self._create_appearance_page())
+        self.stack.addWidget(self._create_behavior_page())
+        self.stack.addWidget(self._create_shortcuts_page())
+        content_layout.addWidget(self.stack, 1)
 
         # Button box
         button_box = QDialogButtonBox(
@@ -57,86 +327,293 @@ class SettingsDialog(QDialog):
         )
         button_box.accepted.connect(self._save_settings)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
+        content_layout.addWidget(button_box)
 
-    def _create_general_tab(self) -> QWidget:
-        """Create the General settings tab."""
+        main_layout.addLayout(content_layout, 1)
+
+    def _on_nav_changed(self, index: int) -> None:
+        """Handle navigation item change."""
+        self.stack.setCurrentIndex(index)
+
+    def _create_section_header(self, title: str, description: str = "") -> QWidget:
+        """Create a section header with title and optional description."""
         widget = QWidget()
-        layout = QFormLayout()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(4)
+
+        title_label = QLabel(title)
+        title_label.setProperty("class", "section-title")
+        title_font = QFont()
+        title_font.setPointSize(16)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
+
+        if description:
+            desc_label = QLabel(description)
+            desc_label.setProperty("class", "description")
+            desc_label.setWordWrap(True)
+            layout.addWidget(desc_label)
+
+        return widget
+
+    def _create_setting_row(self, label: str, widget: QWidget, description: str = "") -> QWidget:
+        """Create a setting row with label, widget, and optional description."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(6)
+
+        # Top row: label and widget
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(16)
+
+        label_widget = QLabel(label)
+        label_widget.setMinimumWidth(140)
+        row_layout.addWidget(label_widget)
+
+        row_layout.addWidget(widget, 1)
+        layout.addLayout(row_layout)
+
+        # Description below
+        if description:
+            desc_label = QLabel(description)
+            desc_label.setProperty("class", "description")
+            desc_label.setWordWrap(True)
+            desc_label.setContentsMargins(156, 0, 0, 0)  # Align with widget
+            layout.addWidget(desc_label)
+
+        return container
+
+    def _create_path_input(self, line_edit: QLineEdit, browse_callback) -> QWidget:
+        """Create a path input with inline browse button."""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        line_edit.setReadOnly(True)
+        layout.addWidget(line_edit, 1)
+
+        browse_btn = QPushButton("Browse...")
+        browse_btn.setProperty("class", "secondary")
+        browse_btn.setFixedWidth(90)
+        browse_btn.clicked.connect(browse_callback)
+        layout.addWidget(browse_btn)
+
+        return container
+
+    def _create_general_page(self) -> QWidget:
+        """Create the General settings page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
+
+        # Header
+        layout.addWidget(self._create_section_header(
+            "General",
+            "Configure default paths and file handling options."
+        ))
+
+        # Paths group
+        paths_group = QGroupBox("Paths")
+        paths_layout = QVBoxLayout(paths_group)
+        paths_layout.setSpacing(4)
 
         self.default_dir_edit = QLineEdit()
-        layout.addRow("Default Directory:", self.default_dir_edit)
-
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self._browse_default_dir)
-        layout.addRow("", browse_button)
-
-        self.autosave_checkbox = QCheckBox("Autosave YOLO files")
-        layout.addRow("", self.autosave_checkbox)
-
-        widget.setLayout(layout)
-        return widget
-
-    def _create_yolo_tab(self) -> QWidget:
-        """Create the YOLO settings tab."""
-        widget = QWidget()
-        layout = QFormLayout()
+        self.default_dir_edit.setPlaceholderText("No directory selected")
+        paths_layout.addWidget(self._create_setting_row(
+            "Default Directory",
+            self._create_path_input(self.default_dir_edit, self._browse_default_dir),
+            "Starting directory when opening images"
+        ))
 
         self.model_path_edit = QLineEdit()
-        layout.addRow("Default YOLO Model:", self.model_path_edit)
+        self.model_path_edit.setPlaceholderText("No model selected")
+        paths_layout.addWidget(self._create_setting_row(
+            "YOLO Model",
+            self._create_path_input(self.model_path_edit, self._browse_model_path),
+            "Default YOLO model for auto-detection (.pt file)"
+        ))
 
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self._browse_model_path)
-        layout.addRow("", browse_button)
+        layout.addWidget(paths_group)
 
-        widget.setLayout(layout)
-        return widget
+        # File handling group
+        files_group = QGroupBox("File Handling")
+        files_layout = QVBoxLayout(files_group)
+        files_layout.setSpacing(4)
 
-    def _create_ui_tab(self) -> QWidget:
-        """Create the UI settings tab."""
-        widget = QWidget()
-        layout = QFormLayout()
+        self.autosave_checkbox = QCheckBox("Enable autosave")
+        files_layout.addWidget(self._create_setting_row(
+            "Autosave",
+            self.autosave_checkbox,
+            "Automatically save YOLO annotation files when switching images"
+        ))
+
+        layout.addWidget(files_group)
+
+        layout.addStretch()
+        return page
+
+    def _create_appearance_page(self) -> QWidget:
+        """Create the Appearance settings page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
+
+        # Header
+        layout.addWidget(self._create_section_header(
+            "Appearance",
+            "Customize how annotations are displayed."
+        ))
+
+        # Annotations group
+        annotations_group = QGroupBox("Annotations")
+        annotations_layout = QVBoxLayout(annotations_group)
+        annotations_layout.setSpacing(4)
 
         self.line_thickness_spinbox = QSpinBox()
         self.line_thickness_spinbox.setRange(1, 10)
-        layout.addRow("Line Thickness:", self.line_thickness_spinbox)
+        self.line_thickness_spinbox.setSuffix(" px")
+        annotations_layout.addWidget(self._create_setting_row(
+            "Line Thickness",
+            self.line_thickness_spinbox,
+            "Thickness of annotation outlines (1-10 pixels)"
+        ))
 
         self.font_size_spinbox = QSpinBox()
         self.font_size_spinbox.setRange(6, 24)
-        layout.addRow("Font Size:", self.font_size_spinbox)
+        self.font_size_spinbox.setSuffix(" pt")
+        annotations_layout.addWidget(self._create_setting_row(
+            "Label Size",
+            self.font_size_spinbox,
+            "Font size for annotation labels (6-24 points)"
+        ))
 
-        self.focus_on_select_checkbox = QCheckBox("Focus viewport on selected shape")
-        layout.addRow("", self.focus_on_select_checkbox)
+        layout.addWidget(annotations_group)
 
-        self.zoom_on_select_checkbox = QCheckBox("Zoom to shape on select")
-        layout.addRow("", self.zoom_on_select_checkbox)
+        layout.addStretch()
+        return page
+
+    def _create_behavior_page(self) -> QWidget:
+        """Create the Behavior settings page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
+
+        # Header
+        layout.addWidget(self._create_section_header(
+            "Behavior",
+            "Configure how the application responds to your actions."
+        ))
+
+        # Selection group
+        selection_group = QGroupBox("Selection")
+        selection_layout = QVBoxLayout(selection_group)
+        selection_layout.setSpacing(4)
+
+        self.focus_on_select_checkbox = QCheckBox("Enable focus on selection")
+        selection_layout.addWidget(self._create_setting_row(
+            "Focus Viewport",
+            self.focus_on_select_checkbox,
+            "Center the viewport on a shape when it's selected"
+        ))
+
+        self.zoom_on_select_checkbox = QCheckBox("Enable zoom on selection")
+        selection_layout.addWidget(self._create_setting_row(
+            "Zoom on Select",
+            self.zoom_on_select_checkbox,
+            "Automatically zoom to a shape when it's selected"
+        ))
 
         self.zoom_level_combo = QComboBox()
         self.zoom_level_combo.addItem("Fit to viewport", "fit")
         self.zoom_level_combo.addItem("Close (1.5x)", "close")
         self.zoom_level_combo.addItem("Closer (2x)", "closer")
         self.zoom_level_combo.addItem("Detail (3x)", "detail")
-        layout.addRow("Zoom level:", self.zoom_level_combo)
+        selection_layout.addWidget(self._create_setting_row(
+            "Zoom Level",
+            self.zoom_level_combo,
+            "How much to zoom when selecting a shape"
+        ))
 
-        self.auto_select_checkbox = QCheckBox("Auto-switch to select mode on point click")
-        layout.addRow("", self.auto_select_checkbox)
+        layout.addWidget(selection_group)
+
+        # Drawing group
+        drawing_group = QGroupBox("Drawing")
+        drawing_layout = QVBoxLayout(drawing_group)
+        drawing_layout.setSpacing(4)
+
+        self.auto_select_checkbox = QCheckBox("Enable auto-switch")
+        drawing_layout.addWidget(self._create_setting_row(
+            "Auto Select Mode",
+            self.auto_select_checkbox,
+            "Automatically switch to select mode when clicking on a point"
+        ))
+
+        layout.addWidget(drawing_group)
+
+        layout.addStretch()
+        return page
+
+    def _create_shortcuts_page(self) -> QWidget:
+        """Create the Shortcuts settings page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
+
+        # Header
+        layout.addWidget(self._create_section_header(
+            "Keyboard Shortcuts",
+            "Customize keyboard shortcuts for common actions."
+        ))
+
+        # Shortcuts group
+        shortcuts_group = QGroupBox("Drawing Shortcuts")
+        shortcuts_layout = QVBoxLayout(shortcuts_group)
+        shortcuts_layout.setSpacing(4)
 
         self.finish_drawing_key_edit = QKeySequenceEdit()
-        self.finish_drawing_key_edit.setToolTip("Key or combination to finish polygon drawing (clear to disable)")
-        layout.addRow("Finish drawing key:", self.finish_drawing_key_edit)
+        self.finish_drawing_key_edit.setToolTip("Press a key combination or clear to disable")
+        shortcuts_layout.addWidget(self._create_setting_row(
+            "Finish Drawing",
+            self.finish_drawing_key_edit,
+            "Key to finish drawing the current polygon"
+        ))
 
         self.delete_shape_key_edit = QKeySequenceEdit()
-        self.delete_shape_key_edit.setToolTip("Key or combination to delete selected shape (clear to disable)")
-        layout.addRow("Delete shape key:", self.delete_shape_key_edit)
+        self.delete_shape_key_edit.setToolTip("Press a key combination or clear to disable")
+        shortcuts_layout.addWidget(self._create_setting_row(
+            "Delete Shape",
+            self.delete_shape_key_edit,
+            "Key to delete the currently selected shape"
+        ))
 
-        widget.setLayout(layout)
-        return widget
+        layout.addWidget(shortcuts_group)
+
+        # Info label
+        info_label = QLabel("Click on a shortcut field and press the desired key combination. "
+                           "Clear the field to disable the shortcut.")
+        info_label.setProperty("class", "description")
+        info_label.setWordWrap(True)
+        info_label.setContentsMargins(0, 16, 0, 0)
+        layout.addWidget(info_label)
+
+        layout.addStretch()
+        return page
 
     def _browse_default_dir(self) -> None:
         """Open directory browser for default directory."""
         directory = QFileDialog.getExistingDirectory(
             self,
-            "Select Default Directory"
+            "Select Default Directory",
+            self.default_dir_edit.text() or ""
         )
         if directory:
             self.default_dir_edit.setText(directory)
@@ -146,7 +623,7 @@ class SettingsDialog(QDialog):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select YOLO Model",
-            "",
+            self.model_path_edit.text() or "",
             "YOLO Model (*.pt)"
         )
         if file_path:
