@@ -6,7 +6,7 @@ import base64
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QSize, QRectF, QTimer
 from PyQt6.QtGui import (
@@ -32,6 +32,7 @@ from ..utils.workspace import WorkspaceManager
 from .dialogs.settings import SettingsDialog
 from .dialogs.model_selector import ModelSelector
 from .dialogs.format_choice import FormatChoiceDialog
+from .dialogs.import_export import ImportAnnotationsDialog, ExportAnnotationsDialog
 from .drawing_area import DrawingArea
 from .minimap import MiniatureView
 from .image_browser import ImageListItem, SortableImageList, ImageBrowserWidget, add_annotation_marker
@@ -429,9 +430,9 @@ class MainWindow(QMainWindow):
         drawing_tools.addAction(polygon_action)
 
         # Save
-        save_action = QAction(self._create_icon("save"), "Save YOLO", self)
-        save_action.triggered.connect(self._save_yolo)
-        self.toolbar.addAction(save_action)
+        self.toolbar_save_action = QAction(self._create_icon("save"), "Save", self)
+        self.toolbar_save_action.triggered.connect(self._save_annotations)
+        self.toolbar.addAction(self.toolbar_save_action)
 
         # Model selection
         select_model_action = QAction(self._create_icon("model"), "Select Model", self)
@@ -461,13 +462,31 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("File")
 
-        open_action = QAction("Open Directory", self)
+        open_action = QAction("Open Directory...", self)
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_directory)
         file_menu.addAction(open_action)
 
-        save_action = QAction("Save YOLO", self)
-        save_action.triggered.connect(self._save_yolo)
-        file_menu.addAction(save_action)
+        file_menu.addSeparator()
+
+        self.menu_save_action = QAction("Save", self)
+        self.menu_save_action.setShortcut("Ctrl+S")
+        self.menu_save_action.triggered.connect(self._save_annotations)
+        file_menu.addAction(self.menu_save_action)
+
+        file_menu.addSeparator()
+
+        import_action = QAction("Import Annotations...", self)
+        import_action.setShortcut("Ctrl+I")
+        import_action.triggered.connect(self._import_annotations)
+        file_menu.addAction(import_action)
+
+        export_action = QAction("Export Annotations...", self)
+        export_action.setShortcut("Ctrl+E")
+        export_action.triggered.connect(self._export_annotations)
+        file_menu.addAction(export_action)
+
+        file_menu.addSeparator()
 
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
@@ -634,6 +653,9 @@ class MainWindow(QMainWindow):
         # Update format label in status bar
         display_name = FormatRegistry.get_display_name(self.current_format)
         self.format_label.setText(f"Format: {display_name}")
+
+        # Update Save action text to show current format
+        self._update_save_action_text()
 
         # For dataset formats, load all annotations
         if not self.annotation_handler.is_per_image:
@@ -895,6 +917,361 @@ class MainWindow(QMainWindow):
         """Save class definitions to data.yaml."""
         if self.yolo_data_manager:
             self.yolo_data_manager.update_classes(self.classes)
+
+    def _update_save_action_text(self) -> None:
+        """Update the Save action text to show current format."""
+        display_name = FormatRegistry.get_display_name(self.current_format)
+        save_text = f"Save ({display_name})"
+
+        if hasattr(self, 'menu_save_action'):
+            self.menu_save_action.setText(save_text)
+        if hasattr(self, 'toolbar_save_action'):
+            self.toolbar_save_action.setText(save_text)
+            self.toolbar_save_action.setToolTip(f"Save annotations in {display_name} format")
+
+    def _import_annotations(self) -> None:
+        """Open import annotations dialog."""
+        dialog = ImportAnnotationsDialog(
+            current_directory=self.current_directory,
+            parent=self
+        )
+
+        if dialog.exec() != ImportAnnotationsDialog.DialogCode.Accepted:
+            return
+
+        source_path, format_name, import_mode, preview_data = dialog.get_import_settings()
+
+        if not source_path or not format_name:
+            return
+
+        try:
+            # Load annotations from source
+            handler = FormatRegistry.get_handler(format_name)
+
+            if source_path.is_dir():
+                imported_data = handler.load_directory(source_path)
+            else:
+                imported_data = preview_data  # Use already-loaded preview data
+
+            if not imported_data:
+                QMessageBox.warning(
+                    self,
+                    "Import Failed",
+                    "No annotations found in the selected source."
+                )
+                return
+
+            # Apply imported annotations
+            imported_count = 0
+            for image_name, shapes in imported_data.items():
+                # Check if image exists in current directory
+                if self.current_directory:
+                    image_path = Path(self.current_directory) / image_name
+                    if not image_path.exists():
+                        # Try to find by stem (different extension)
+                        found = False
+                        for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp']:
+                            alt_path = image_path.with_suffix(ext)
+                            if alt_path.exists():
+                                image_name = alt_path.name
+                                found = True
+                                break
+                        if not found:
+                            continue
+
+                if import_mode == "replace":
+                    self.annotations_cache[image_name] = shapes.copy()
+                else:  # merge
+                    existing = self.annotations_cache.get(image_name, [])
+                    self.annotations_cache[image_name] = existing + shapes.copy()
+
+                imported_count += 1
+
+                # Update classes from imported shapes
+                for shape in shapes:
+                    if shape.label and shape.label not in self.classes:
+                        new_id = len(self.classes)
+                        self.classes[shape.label] = new_id
+
+            # Reload current image to show imported annotations
+            if self.current_image and self.current_image in self.annotations_cache:
+                self.image_label.shapes = self.annotations_cache[self.current_image].copy()
+                self.image_label.update()
+                self._update_shapes_list()
+
+            # Save all imported annotations in current format
+            if self.annotation_handler:
+                self.annotation_handler.set_classes(self.classes)
+                if not self.annotation_handler.is_per_image:
+                    # Dataset format - save all at once
+                    self.annotation_handler.save_directory(
+                        Path(self.current_directory),
+                        self.annotations_cache,
+                        self.image_sizes_cache
+                    )
+                else:
+                    # Per-image format - save each modified image
+                    for image_name, shapes in imported_data.items():
+                        if image_name in self.annotations_cache:
+                            image_path = Path(self.current_directory) / image_name
+                            if image_path.exists():
+                                # We need image dimensions - estimate from cache or load
+                                if image_name in self.image_sizes_cache:
+                                    w, h = self.image_sizes_cache[image_name]
+                                else:
+                                    # Load to get dimensions
+                                    pixmap = QPixmap(str(image_path))
+                                    w, h = pixmap.width(), pixmap.height()
+                                    self.image_sizes_cache[image_name] = (w, h)
+
+                                self.annotation_handler.write_image(
+                                    image_path,
+                                    self.annotations_cache[image_name],
+                                    w, h
+                                )
+
+            # Update class list UI
+            self._update_class_list()
+            self._save_classes_for_format()
+
+            # Update image browser to show annotation markers
+            self._refresh_image_list()
+
+            QMessageBox.information(
+                self,
+                "Import Complete",
+                f"Successfully imported annotations for {imported_count} images."
+            )
+
+            logger.info(f"Imported {imported_count} images from {source_path}")
+
+        except Exception as e:
+            logger.exception("Error importing annotations")
+            QMessageBox.critical(
+                self,
+                "Import Error",
+                f"Failed to import annotations: {e}"
+            )
+
+    def _export_annotations(self) -> None:
+        """Open export annotations dialog."""
+        # Check if we have polygons
+        has_polygons = False
+        for shapes in self.annotations_cache.values():
+            for shape in shapes:
+                if shape.type == ShapeType.POLYGON:
+                    has_polygons = True
+                    break
+            if has_polygons:
+                break
+
+        # Also check current image shapes
+        if not has_polygons and self.image_label:
+            for shape in self.image_label.shapes:
+                if shape.type == ShapeType.POLYGON:
+                    has_polygons = True
+                    break
+
+        dialog = ExportAnnotationsDialog(
+            current_directory=self.current_directory,
+            current_format=self.current_format,
+            current_image=self.current_image,
+            total_images=self.image_list.count() if self.image_list else 0,
+            has_polygons=has_polygons,
+            parent=self
+        )
+
+        if dialog.exec() != ExportAnnotationsDialog.DialogCode.Accepted:
+            return
+
+        target_format, scope, target_dir = dialog.get_export_settings()
+
+        if not target_format:
+            return
+
+        try:
+            # Create export handler
+            export_handler = FormatRegistry.get_handler(target_format, self.classes.copy())
+
+            if scope == "current" and self.current_image:
+                # Export current image only
+                self._export_single_image(export_handler, target_dir)
+            else:
+                # Export all images
+                self._export_all_images(export_handler, target_dir)
+
+            display_name = FormatRegistry.get_display_name(target_format)
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Successfully exported annotations to {display_name} format in:\n{target_dir}"
+            )
+
+            logger.info(f"Exported to {target_format} format in {target_dir}")
+
+        except Exception as e:
+            logger.exception("Error exporting annotations")
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"Failed to export annotations: {e}"
+            )
+
+    def _export_single_image(self, handler, target_dir: Path) -> None:
+        """Export annotations for the current image only."""
+        if not self.current_image or not self.current_directory:
+            return
+
+        image_path = Path(self.current_directory) / self.current_image
+        shapes = self.image_label.shapes if self.image_label else []
+
+        if not shapes:
+            return
+
+        # Get image dimensions
+        if self.image_label and self.image_label.pixmap():
+            w = self.image_label.pixmap().width()
+            h = self.image_label.pixmap().height()
+        else:
+            pixmap = QPixmap(str(image_path))
+            w, h = pixmap.width(), pixmap.height()
+
+        # For per-image formats, write directly
+        if handler.is_per_image:
+            # Write to target directory
+            target_image_path = target_dir / self.current_image
+            handler.write_image(target_image_path, shapes, w, h)
+        else:
+            # For dataset formats, create a single-image dataset
+            annotations = {self.current_image: shapes}
+            sizes = {self.current_image: (w, h)}
+            handler.save_directory(target_dir, annotations, sizes)
+
+    def _export_all_images(self, handler, target_dir: Path) -> None:
+        """Export annotations for all images."""
+        if not self.current_directory:
+            return
+
+        source_dir = Path(self.current_directory)
+
+        # Ensure current image is saved to cache first
+        if self.current_image and self.image_label:
+            self.annotations_cache[self.current_image] = self.image_label.shapes.copy()
+            if self.image_label.pixmap():
+                self.image_sizes_cache[self.current_image] = (
+                    self.image_label.pixmap().width(),
+                    self.image_label.pixmap().height()
+                )
+
+        # Load ALL annotations from source directory
+        all_annotations: Dict[str, List[Shape]] = {}
+        all_sizes: Dict[str, Tuple[int, int]] = {}
+
+        if self.annotation_handler:
+            # For per-image formats, load_directory returns empty dict
+            # We need to find all images with annotations and load them individually
+            if self.annotation_handler.is_per_image:
+                all_annotations, all_sizes = self._load_all_per_image_annotations(source_dir)
+            else:
+                # Dataset formats can load all at once
+                all_annotations = self.annotation_handler.load_directory(source_dir)
+                # Load image sizes for all annotated images
+                for image_name in all_annotations:
+                    if image_name in self.image_sizes_cache:
+                        all_sizes[image_name] = self.image_sizes_cache[image_name]
+                    else:
+                        image_path = source_dir / image_name
+                        if image_path.exists():
+                            pixmap = QPixmap(str(image_path))
+                            w, h = pixmap.width(), pixmap.height()
+                            all_sizes[image_name] = (w, h)
+                            self.image_sizes_cache[image_name] = (w, h)
+
+            # Merge with any unsaved changes in cache (current image edits)
+            for image_name, shapes in self.annotations_cache.items():
+                if shapes:  # Only override if there are shapes
+                    all_annotations[image_name] = shapes.copy()
+
+        # Now export using the target handler
+        if handler.is_per_image:
+            for image_name, shapes in all_annotations.items():
+                if not shapes:
+                    continue
+
+                if image_name not in all_sizes:
+                    continue
+
+                w, h = all_sizes[image_name]
+                target_image_path = target_dir / image_name
+                handler.write_image(target_image_path, shapes, w, h)
+        else:
+            # For dataset formats, save all at once
+            handler.save_directory(target_dir, all_annotations, all_sizes)
+
+    def _load_all_per_image_annotations(
+        self,
+        directory: Path
+    ) -> Tuple[Dict[str, List[Shape]], Dict[str, Tuple[int, int]]]:
+        """
+        Load all annotations for per-image formats (YOLO, Pascal VOC).
+
+        This finds all images with annotations and loads them with their dimensions.
+
+        Returns:
+            Tuple of (annotations dict, sizes dict)
+        """
+        all_annotations: Dict[str, List[Shape]] = {}
+        all_sizes: Dict[str, Tuple[int, int]] = {}
+
+        if not self.annotation_handler:
+            return all_annotations, all_sizes
+
+        # Get all image files in directory
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
+
+        for image_path in directory.iterdir():
+            if image_path.suffix.lower() not in image_extensions:
+                continue
+
+            # Check if this image has an annotation
+            if not self.annotation_handler.has_annotation(image_path):
+                continue
+
+            image_name = image_path.name
+
+            # Get image dimensions
+            if image_name in self.image_sizes_cache:
+                w, h = self.image_sizes_cache[image_name]
+            else:
+                pixmap = QPixmap(str(image_path))
+                if pixmap.isNull():
+                    continue
+                w, h = pixmap.width(), pixmap.height()
+                self.image_sizes_cache[image_name] = (w, h)
+
+            all_sizes[image_name] = (w, h)
+
+            # Load annotations for this image
+            shapes = self.annotation_handler.read_image(image_path, w, h)
+            if shapes:
+                all_annotations[image_name] = shapes
+
+        return all_annotations, all_sizes
+
+    def _refresh_image_list(self) -> None:
+        """Refresh the image list to update annotation markers."""
+        if not self.current_directory:
+            return
+
+        # Update each item's annotation status
+        for i in range(self.image_list.count()):
+            item = self.image_list.item(i)
+            if isinstance(item, ImageListItem):
+                has_ann = item.image_name in self.annotations_cache and bool(
+                    self.annotations_cache[item.image_name]
+                )
+                if item.has_annotation != has_ann:
+                    self._update_image_list_item(item.image_name, has_ann)
 
     def _update_image_list_item(self, image_name: str, has_annotation: bool) -> None:
         """Update image list item annotation status."""
