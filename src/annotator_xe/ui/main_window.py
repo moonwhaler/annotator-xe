@@ -31,6 +31,7 @@ from ..workers.image_loader import ImageLoader, get_image_files
 from ..utils.workspace import WorkspaceManager
 from .dialogs.settings import SettingsDialog
 from .dialogs.model_selector import ModelSelector
+from .dialogs.format_choice import FormatChoiceDialog
 from .drawing_area import DrawingArea
 from .minimap import MiniatureView
 from .image_browser import ImageListItem, SortableImageList, ImageBrowserWidget, add_annotation_marker
@@ -596,10 +597,34 @@ class MainWindow(QMainWindow):
             self._load_classes_for_format()
             self.dir_label.setText(f"Directory: {self.current_directory}")
 
-    def _detect_and_set_format(self, directory: Path) -> None:
-        """Detect annotation format and initialize handler."""
+    def _detect_and_set_format(self, directory: Path) -> bool:
+        """
+        Detect annotation format and initialize handler.
+
+        Returns:
+            True if format was set successfully, False if user cancelled
+        """
         if self.config.auto_detect_format:
-            self.current_format = FormatRegistry.detect_format(directory)
+            detected_formats = FormatRegistry.detect_all_formats(directory)
+
+            if len(detected_formats) > 1:
+                # Multiple formats detected - let user choose
+                dialog = FormatChoiceDialog(
+                    detected_formats,
+                    directory.name,
+                    parent=self
+                )
+                if dialog.exec() == FormatChoiceDialog.DialogCode.Accepted:
+                    self.current_format = dialog.get_selected_format()
+                else:
+                    # User cancelled - use default
+                    self.current_format = self.config.default_annotation_format
+                    return False
+            elif len(detected_formats) == 1:
+                self.current_format = detected_formats[0]
+            else:
+                # No format detected - use default
+                self.current_format = self.config.default_annotation_format
         else:
             self.current_format = self.config.default_annotation_format
 
@@ -622,6 +647,7 @@ class MainWindow(QMainWindow):
             self.annotations_cache.clear()
 
         logger.info(f"Using {display_name} format for {directory}")
+        return True
 
     def _load_classes_for_format(self) -> None:
         """Load class definitions based on current format."""

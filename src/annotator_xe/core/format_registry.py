@@ -89,6 +89,37 @@ class FormatRegistry:
         return handler_class(classes)
 
     @classmethod
+    def detect_all_formats(cls, directory: Path) -> List[str]:
+        """
+        Detect all annotation formats present in a directory.
+
+        Args:
+            directory: Path to the directory to analyze
+
+        Returns:
+            List of format name strings that were detected (may be empty)
+        """
+        directory = Path(directory)
+        if not directory.is_dir():
+            return []
+
+        detected = []
+
+        if cls._detect_coco(directory):
+            detected.append("coco")
+
+        if cls._detect_createml(directory):
+            detected.append("createml")
+
+        if cls._detect_pascal_voc(directory):
+            detected.append("pascal_voc")
+
+        if cls._detect_yolo(directory):
+            detected.append("yolo")
+
+        return detected
+
+    @classmethod
     def detect_format(cls, directory: Path) -> str:
         """
         Auto-detect the annotation format used in a directory.

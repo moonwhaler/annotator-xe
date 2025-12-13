@@ -206,3 +206,107 @@ class TestFormatDetection:
             # Should fall back to yolo
             detected = FormatRegistry.detect_format(Path(tmpdir))
             assert detected == "yolo"
+
+
+class TestDetectAllFormats:
+    """Tests for detect_all_formats method."""
+
+    def test_detect_all_formats_empty_directory(self):
+        """Test that empty directory returns empty list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            detected = FormatRegistry.detect_all_formats(Path(tmpdir))
+            assert detected == []
+
+    def test_detect_all_formats_nonexistent_directory(self):
+        """Test that nonexistent directory returns empty list."""
+        detected = FormatRegistry.detect_all_formats(Path("/nonexistent/path"))
+        assert detected == []
+
+    def test_detect_all_formats_single_format(self):
+        """Test detection of a single format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create YOLO format
+            (Path(tmpdir) / "test.jpg").touch()
+            (Path(tmpdir) / "test.txt").write_text("0 0.5 0.5 0.2 0.1")
+
+            detected = FormatRegistry.detect_all_formats(Path(tmpdir))
+            assert detected == ["yolo"]
+
+    def test_detect_all_formats_coco_and_yolo(self):
+        """Test detection of both COCO and YOLO formats."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create image
+            (Path(tmpdir) / "test.jpg").touch()
+
+            # Create YOLO annotation
+            (Path(tmpdir) / "test.txt").write_text("0 0.5 0.5 0.2 0.1")
+
+            # Create COCO annotation
+            coco_data = {
+                "images": [{"id": 1, "file_name": "test.jpg"}],
+                "annotations": [],
+                "categories": []
+            }
+            (Path(tmpdir) / "_annotations.coco.json").write_text(json.dumps(coco_data))
+
+            detected = FormatRegistry.detect_all_formats(Path(tmpdir))
+            assert "coco" in detected
+            assert "yolo" in detected
+            assert len(detected) == 2
+
+    def test_detect_all_formats_pascal_voc_and_yolo(self):
+        """Test detection of both Pascal VOC and YOLO formats."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create image
+            (Path(tmpdir) / "test.jpg").touch()
+
+            # Create YOLO annotation
+            (Path(tmpdir) / "test.txt").write_text("0 0.5 0.5 0.2 0.1")
+
+            # Create Pascal VOC annotation
+            voc_xml = """<?xml version="1.0"?>
+<annotation>
+    <filename>test.jpg</filename>
+    <object>
+        <name>cat</name>
+        <bndbox>
+            <xmin>100</xmin>
+            <ymin>100</ymin>
+            <xmax>200</xmax>
+            <ymax>200</ymax>
+        </bndbox>
+    </object>
+</annotation>"""
+            (Path(tmpdir) / "test.xml").write_text(voc_xml)
+
+            detected = FormatRegistry.detect_all_formats(Path(tmpdir))
+            assert "pascal_voc" in detected
+            assert "yolo" in detected
+            assert len(detected) == 2
+
+    def test_detect_all_formats_multiple_formats(self):
+        """Test detection of three formats simultaneously."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create image
+            (Path(tmpdir) / "test.jpg").touch()
+
+            # Create YOLO annotation
+            (Path(tmpdir) / "test.txt").write_text("0 0.5 0.5 0.2 0.1")
+
+            # Create COCO annotation
+            coco_data = {
+                "images": [{"id": 1, "file_name": "test.jpg"}],
+                "annotations": [],
+                "categories": []
+            }
+            (Path(tmpdir) / "_annotations.coco.json").write_text(json.dumps(coco_data))
+
+            # Create CreateML annotation
+            createml_data = [{"image": "test.jpg", "annotations": []}]
+            (Path(tmpdir) / "_annotations.createml.json").write_text(json.dumps(createml_data))
+
+            detected = FormatRegistry.detect_all_formats(Path(tmpdir))
+            assert "coco" in detected
+            assert "createml" in detected
+            assert "yolo" in detected
+            assert len(detected) == 3
