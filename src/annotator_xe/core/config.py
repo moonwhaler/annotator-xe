@@ -28,6 +28,9 @@ class AppConfig:
     line_thickness: int = 2
     font_size: int = 10
     autosave: bool = False
+    focus_on_select: bool = True
+    zoom_on_select: bool = False
+    zoom_on_select_level: str = "fit"  # fit, close, closer, detail
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -37,6 +40,9 @@ class AppConfig:
             "lineThickness": self.line_thickness,
             "fontSize": self.font_size,
             "autosave": self.autosave,
+            "focusOnSelect": self.focus_on_select,
+            "zoomOnSelect": self.zoom_on_select,
+            "zoomOnSelectLevel": self.zoom_on_select_level,
         }
 
     @classmethod
@@ -48,6 +54,9 @@ class AppConfig:
             line_thickness=data.get("lineThickness", 2),
             font_size=data.get("fontSize", 10),
             autosave=data.get("autosave", False),
+            focus_on_select=data.get("focusOnSelect", True),
+            zoom_on_select=data.get("zoomOnSelect", False),
+            zoom_on_select_level=data.get("zoomOnSelectLevel", "fit"),
         )
 
 

@@ -1,5 +1,8 @@
 autosave: false
 defaultDirectory: ''
+focusOnSelect: true
 fontSize: 12
 lineThickness: 2
 yoloModelPath: ''
+zoomOnSelect: true
+zoomOnSelectLevel: fit

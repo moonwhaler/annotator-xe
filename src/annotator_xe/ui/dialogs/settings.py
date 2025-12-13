@@ -8,7 +8,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QTabWidget, QWidget,
     QLineEdit, QPushButton, QSpinBox, QCheckBox, QDialogButtonBox,
-    QFileDialog
+    QFileDialog, QComboBox
 )
 
 from ...core.config import AppConfig, ConfigManager
@@ -104,6 +104,19 @@ class SettingsDialog(QDialog):
         self.font_size_spinbox.setRange(6, 24)
         layout.addRow("Font Size:", self.font_size_spinbox)
 
+        self.focus_on_select_checkbox = QCheckBox("Focus viewport on selected shape")
+        layout.addRow("", self.focus_on_select_checkbox)
+
+        self.zoom_on_select_checkbox = QCheckBox("Zoom to shape on select")
+        layout.addRow("", self.zoom_on_select_checkbox)
+
+        self.zoom_level_combo = QComboBox()
+        self.zoom_level_combo.addItem("Fit to viewport", "fit")
+        self.zoom_level_combo.addItem("Close (1.5x)", "close")
+        self.zoom_level_combo.addItem("Closer (2x)", "closer")
+        self.zoom_level_combo.addItem("Detail (3x)", "detail")
+        layout.addRow("Zoom level:", self.zoom_level_combo)
+
         widget.setLayout(layout)
         return widget
 
@@ -136,6 +149,11 @@ class SettingsDialog(QDialog):
         self.line_thickness_spinbox.setValue(config.line_thickness)
         self.font_size_spinbox.setValue(config.font_size)
         self.autosave_checkbox.setChecked(config.autosave)
+        self.focus_on_select_checkbox.setChecked(config.focus_on_select)
+        self.zoom_on_select_checkbox.setChecked(config.zoom_on_select)
+        index = self.zoom_level_combo.findData(config.zoom_on_select_level)
+        if index >= 0:
+            self.zoom_level_combo.setCurrentIndex(index)
 
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
@@ -144,7 +162,10 @@ class SettingsDialog(QDialog):
             yolo_model_path=self.model_path_edit.text(),
             line_thickness=self.line_thickness_spinbox.value(),
             font_size=self.font_size_spinbox.value(),
-            autosave=self.autosave_checkbox.isChecked()
+            autosave=self.autosave_checkbox.isChecked(),
+            focus_on_select=self.focus_on_select_checkbox.isChecked(),
+            zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
+            zoom_on_select_level=self.zoom_level_combo.currentData()
         )
 
         self.config_manager.save(config)
@@ -163,5 +184,8 @@ class SettingsDialog(QDialog):
             yolo_model_path=self.model_path_edit.text(),
             line_thickness=self.line_thickness_spinbox.value(),
             font_size=self.font_size_spinbox.value(),
-            autosave=self.autosave_checkbox.isChecked()
+            autosave=self.autosave_checkbox.isChecked(),
+            focus_on_select=self.focus_on_select_checkbox.isChecked(),
+            zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
+            zoom_on_select_level=self.zoom_level_combo.currentData()
         )

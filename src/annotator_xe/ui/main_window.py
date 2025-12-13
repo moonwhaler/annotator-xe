@@ -853,9 +853,15 @@ class MainWindow(QMainWindow):
         if selected:
             index = selected[0].data(Qt.ItemDataRole.UserRole)
             if 0 <= index < len(self.image_label.shapes):
-                self.image_label.selected_shape = self.image_label.shapes[index]
+                shape = self.image_label.shapes[index]
+                self.image_label.selected_shape = shape
                 self.image_label.update()
                 self.setFocus()
+
+                if self.config.zoom_on_select:
+                    self._zoom_to_shape(shape)
+                elif self.config.focus_on_select:
+                    self._focus_on_shape(shape)
 
     def _delete_selected_shape_from_list(self) -> None:
         """Delete the selected shape from the list."""
@@ -886,6 +892,83 @@ class MainWindow(QMainWindow):
         self._update_shapes()
         if self.config.autosave:
             self._save_yolo()
+
+    def _is_shape_visible(self, shape: Shape) -> bool:
+        """Check if shape is currently visible in viewport."""
+        if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
+            return True
+
+        x, y, w, h = shape.get_bounding_rect()
+        scale = self.image_label.scale_factor
+        shape_screen_rect = QRectF(x * scale, y * scale, w * scale, h * scale)
+
+        viewport = self.image_scroll_area.viewport().rect()
+        scroll_x = self.image_scroll_area.horizontalScrollBar().value()
+        scroll_y = self.image_scroll_area.verticalScrollBar().value()
+        visible_rect = QRectF(scroll_x, scroll_y, viewport.width(), viewport.height())
+
+        return visible_rect.intersects(shape_screen_rect)
+
+    def _focus_on_shape(self, shape: Shape) -> None:
+        """Scroll viewport to center on the shape."""
+        if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
+            return
+
+        x, y, w, h = shape.get_bounding_rect()
+        center_x = x + w / 2
+        center_y = y + h / 2
+
+        scale = self.image_label.scale_factor
+        screen_center_x = center_x * scale
+        screen_center_y = center_y * scale
+
+        viewport = self.image_scroll_area.viewport()
+        new_scroll_x = screen_center_x - viewport.width() / 2
+        new_scroll_y = screen_center_y - viewport.height() / 2
+
+        new_scroll_x = max(0, new_scroll_x)
+        new_scroll_y = max(0, new_scroll_y)
+
+        self.image_scroll_area.horizontalScrollBar().setValue(int(new_scroll_x))
+        self.image_scroll_area.verticalScrollBar().setValue(int(new_scroll_y))
+
+    def _zoom_to_shape(self, shape: Shape) -> None:
+        """Zoom viewport to fit the shape based on configured zoom level."""
+        if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
+            return
+
+        x, y, w, h = shape.get_bounding_rect()
+        if w <= 0 or h <= 0:
+            return
+
+        viewport = self.image_scroll_area.viewport()
+        viewport_w = viewport.width()
+        viewport_h = viewport.height()
+
+        padding = 0.1
+        padded_w = w * (1 + padding)
+        padded_h = h * (1 + padding)
+
+        scale_x = viewport_w / padded_w
+        scale_y = viewport_h / padded_h
+        fit_scale = min(scale_x, scale_y)
+
+        zoom_multipliers = {
+            "fit": 1.0,
+            "close": 1.5,
+            "closer": 2.0,
+            "detail": 3.0,
+        }
+        zoom_level = self.config.zoom_on_select_level
+        multiplier = zoom_multipliers.get(zoom_level, 1.0)
+
+        target_scale = fit_scale * multiplier
+        target_scale = max(0.2, min(5.0, target_scale))
+
+        self.image_label.set_scale_factor(target_scale)
+        self.zoom_slider.setValue(int(target_scale * 100))
+
+        self._focus_on_shape(shape)
 
     # === Drawing Tool Operations ===
 
