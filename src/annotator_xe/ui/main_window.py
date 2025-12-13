@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         self.image_label.set_scroll_area(self.image_scroll_area)
         self.image_label.line_thickness = self.config.line_thickness
         self.image_label.font_size = self.config.font_size
+        self.image_label.auto_select_on_point_click = self.config.auto_select_on_point_click
 
         self.image_scroll_area.setWidget(self.image_label)
         self.image_scroll_area.setWidgetResizable(True)
@@ -480,6 +481,7 @@ class MainWindow(QMainWindow):
         self.image_label.shapes_changed.connect(self._update_shapes)
         self.image_label.shape_created.connect(self._on_shape_created)
         self.image_label.points_deleted.connect(self._on_points_deleted)
+        self.image_label.select_mode_requested.connect(self._switch_to_select_mode)
 
         # Undo/Redo state changes
         self.image_label.undo_manager.state_changed.connect(self._update_undo_redo_state)
@@ -979,6 +981,15 @@ class MainWindow(QMainWindow):
             self.image_label.finish_drawing()
         self._show_status_message(f"Current tool: {tool.capitalize()}")
 
+    def _switch_to_select_mode(self) -> None:
+        """Switch to select mode (triggered by point click in draw mode)."""
+        self._set_drawing_tool("select")
+        # Update toolbar to reflect the change
+        for action in self.toolbar.actions():
+            if action.text() == "Select":
+                action.setChecked(True)
+                break
+
     # === Zoom Operations ===
 
     def _zoom_image(self, value: int) -> None:
@@ -1197,6 +1208,7 @@ class MainWindow(QMainWindow):
         config = self.config_manager.config
         self.image_label.line_thickness = config.line_thickness
         self.image_label.font_size = config.font_size
+        self.image_label.auto_select_on_point_click = config.auto_select_on_point_click
         self.image_label.update()
 
     # === Workspace Operations ===

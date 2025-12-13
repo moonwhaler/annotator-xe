@@ -1,3 +1,4 @@
+autoSelectOnPointClick: true
 autosave: false
 defaultDirectory: ''
 focusOnSelect: true

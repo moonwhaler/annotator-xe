@@ -38,6 +38,7 @@ class DrawingArea(QLabel):
     shapes_changed = pyqtSignal()
     points_deleted = pyqtSignal()
     shape_created = pyqtSignal()
+    select_mode_requested = pyqtSignal()
 
     # Constants
     MIN_ZOOM = 0.2
@@ -56,6 +57,7 @@ class DrawingArea(QLabel):
         self.polygon_color = QColor("#00FF00")
         self.line_thickness = 2
         self.font_size = 10
+        self.auto_select_on_point_click = True
 
         # Undo/Redo manager
         self.undo_manager = UndoRedoManager()
@@ -498,8 +500,22 @@ class DrawingArea(QLabel):
 
     # === Tool Handling Methods ===
 
+    def _get_point_at_position(self, pos: QPointF) -> Optional[Tuple[Shape, int]]:
+        """Check if there's a shape point at the given position."""
+        for shape in self.shapes:
+            for i, point in enumerate(shape.points):
+                if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
+                    return (shape, i)
+        return None
+
     def _handle_polygon_click(self, pos: QPointF) -> None:
         """Handle click in polygon drawing mode."""
+        if self.auto_select_on_point_click and not self.drawing:
+            point_info = self._get_point_at_position(pos)
+            if point_info:
+                self._switch_to_select_and_grab_point(point_info, pos)
+                return
+
         if not self.drawing:
             if self.hover_edge:
                 self._insert_point_to_polygon(pos)
@@ -511,9 +527,59 @@ class DrawingArea(QLabel):
 
     def _handle_box_click(self, pos: QPointF) -> None:
         """Handle click in box drawing mode."""
+        if self.auto_select_on_point_click:
+            point_info = self._get_point_at_position(pos)
+            if point_info:
+                self._switch_to_select_and_grab_point(point_info, pos)
+                return
+
         self.drawing = True
         self.start_point = pos
         self.current_shape = Shape(ShapeType.BOX, [self.start_point, self.start_point])
+
+    def _switch_to_select_and_grab_point(self, point_info: Tuple[Shape, int], pos: QPointF) -> None:
+        """Switch to select mode and immediately grab the point for dragging."""
+        shape, point_index = point_info
+
+        # Clear any previous selection state
+        for s in self.shapes:
+            s.selected = False
+
+        # Set up the point for dragging
+        shape.selected = True
+        self.selected_shape = shape
+        self.selected_points = [(shape, point_index)]
+
+        if shape.type == ShapeType.BOX:
+            # For boxes, set up resize handle
+            rect = QRectF(shape.points[0], shape.points[1]).normalized()
+            handle_map = {
+                0: "topleft",
+                1: "bottomright"
+            }
+            # Determine which corner based on point index
+            if point_index == 0:
+                # Check if this is top-left or bottom-right after normalization
+                if shape.points[0] == rect.topLeft():
+                    handle = "topleft"
+                else:
+                    handle = "bottomright"
+            else:
+                if shape.points[1] == rect.bottomRight():
+                    handle = "bottomright"
+                else:
+                    handle = "topleft"
+            self.resize_handle = (shape, handle)
+            self._move_start_points = [QPointF(p) for p in shape.points]
+        else:
+            # For polygons, set up point dragging
+            self.moving_point = shape.points[point_index]
+            self._point_move_start = QPointF(shape.points[point_index])
+            self._point_move_index = point_index
+
+        # Emit signal to update toolbar
+        self.select_mode_requested.emit()
+        self.update()
 
     def _handle_select_click(self, pos: QPointF, event: QMouseEvent) -> None:
         """Handle click in select mode."""

@@ -31,6 +31,7 @@ class AppConfig:
     focus_on_select: bool = True
     zoom_on_select: bool = False
     zoom_on_select_level: str = "fit"  # fit, close, closer, detail
+    auto_select_on_point_click: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -43,6 +44,7 @@ class AppConfig:
             "focusOnSelect": self.focus_on_select,
             "zoomOnSelect": self.zoom_on_select,
             "zoomOnSelectLevel": self.zoom_on_select_level,
+            "autoSelectOnPointClick": self.auto_select_on_point_click,
         }
 
     @classmethod
@@ -57,6 +59,7 @@ class AppConfig:
             focus_on_select=data.get("focusOnSelect", True),
             zoom_on_select=data.get("zoomOnSelect", False),
             zoom_on_select_level=data.get("zoomOnSelectLevel", "fit"),
+            auto_select_on_point_click=data.get("autoSelectOnPointClick", True),
         )
 
 

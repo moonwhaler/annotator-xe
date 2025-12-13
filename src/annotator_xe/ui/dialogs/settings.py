@@ -117,6 +117,9 @@ class SettingsDialog(QDialog):
         self.zoom_level_combo.addItem("Detail (3x)", "detail")
         layout.addRow("Zoom level:", self.zoom_level_combo)
 
+        self.auto_select_checkbox = QCheckBox("Auto-switch to select mode on point click")
+        layout.addRow("", self.auto_select_checkbox)
+
         widget.setLayout(layout)
         return widget
 
@@ -154,6 +157,7 @@ class SettingsDialog(QDialog):
         index = self.zoom_level_combo.findData(config.zoom_on_select_level)
         if index >= 0:
             self.zoom_level_combo.setCurrentIndex(index)
+        self.auto_select_checkbox.setChecked(config.auto_select_on_point_click)
 
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
@@ -165,7 +169,8 @@ class SettingsDialog(QDialog):
             autosave=self.autosave_checkbox.isChecked(),
             focus_on_select=self.focus_on_select_checkbox.isChecked(),
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
-            zoom_on_select_level=self.zoom_level_combo.currentData()
+            zoom_on_select_level=self.zoom_level_combo.currentData(),
+            auto_select_on_point_click=self.auto_select_checkbox.isChecked()
         )
 
         self.config_manager.save(config)
@@ -187,5 +192,6 @@ class SettingsDialog(QDialog):
             autosave=self.autosave_checkbox.isChecked(),
             focus_on_select=self.focus_on_select_checkbox.isChecked(),
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
-            zoom_on_select_level=self.zoom_level_combo.currentData()
+            zoom_on_select_level=self.zoom_level_combo.currentData(),
+            auto_select_on_point_click=self.auto_select_checkbox.isChecked()
         )
