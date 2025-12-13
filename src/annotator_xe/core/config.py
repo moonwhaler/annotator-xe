@@ -35,6 +35,8 @@ class AppConfig:
     finish_drawing_key: str = "Escape"  # Key/combination to finish polygon drawing (empty to disable)
     delete_shape_key: str = "Delete"  # Key/combination to delete selected shape (empty to disable)
     thumbnail_size: int = 80  # Thumbnail size in pixels (48-160)
+    thumbnail_cache_enabled: bool = True  # Enable disk cache for thumbnails
+    thumbnail_cache_max_mb: int = 500  # Maximum thumbnail cache size in MB
     default_annotation_format: str = "yolo"  # Default format for new directories
     auto_detect_format: bool = True  # Auto-detect format when opening directory
 
@@ -53,6 +55,8 @@ class AppConfig:
             "finishDrawingKey": self.finish_drawing_key,
             "deleteShapeKey": self.delete_shape_key,
             "thumbnailSize": self.thumbnail_size,
+            "thumbnailCacheEnabled": self.thumbnail_cache_enabled,
+            "thumbnailCacheMaxMb": self.thumbnail_cache_max_mb,
             "defaultAnnotationFormat": self.default_annotation_format,
             "autoDetectFormat": self.auto_detect_format,
         }
@@ -73,6 +77,8 @@ class AppConfig:
             finish_drawing_key=data.get("finishDrawingKey", "Escape"),
             delete_shape_key=data.get("deleteShapeKey", "Delete"),
             thumbnail_size=data.get("thumbnailSize", 80),
+            thumbnail_cache_enabled=data.get("thumbnailCacheEnabled", True),
+            thumbnail_cache_max_mb=data.get("thumbnailCacheMaxMb", 500),
             default_annotation_format=data.get("defaultAnnotationFormat", "yolo"),
             auto_detect_format=data.get("autoDetectFormat", True),
         )

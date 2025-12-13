@@ -27,7 +27,8 @@ from ..core.detector import YOLODetector
 from ..core.format_registry import FormatRegistry
 from ..core.models import Shape, ShapeType
 from ..core.yolo_format import YOLOAnnotationReader, YOLOAnnotationWriter
-from ..workers.image_loader import ImageLoader, get_image_files
+from ..workers.image_loader import ImageLoader, ImageScanner, ThumbnailLoader, get_image_files
+from ..core.thumbnail_cache import get_thumbnail_cache, ThumbnailCache
 from ..utils.workspace import WorkspaceManager
 from .dialogs.settings import SettingsDialog
 from .dialogs.model_selector import ModelSelector
@@ -35,7 +36,10 @@ from .dialogs.format_choice import FormatChoiceDialog
 from .dialogs.import_export import ImportAnnotationsDialog, ExportAnnotationsDialog
 from .drawing_area import DrawingArea
 from .minimap import MiniatureView
-from .image_browser import ImageListItem, SortableImageList, ImageBrowserWidget, add_annotation_marker
+from .image_browser import (
+    ImageListItem, SortableImageList, ImageBrowserWidget,
+    add_annotation_marker, create_placeholder_icon
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +87,12 @@ class MainWindow(QMainWindow):
         self.classes: Dict[str, int] = {}
         self.yolo_detector: Optional[YOLODetector] = None
         self.image_loader: Optional[ImageLoader] = None
+        self.image_scanner: Optional[ImageScanner] = None
+        self.thumbnail_loader: Optional[ThumbnailLoader] = None
+        self.thumbnail_cache: ThumbnailCache = get_thumbnail_cache(
+            max_size_mb=self.config_manager.config.thumbnail_cache_max_mb,
+            enabled=self.config_manager.config.thumbnail_cache_enabled
+        )
 
         # UI elements (initialized in _init_ui)
         self.dock_widgets: Dict[str, QDockWidget] = {}
@@ -710,22 +720,129 @@ class MainWindow(QMainWindow):
         self.hide_tagged_checkbox.setChecked(False)
 
     def _load_images(self, dir_path: str) -> None:
-        """Load images from directory in background."""
+        """Load images from directory using lazy loading.
+
+        Phase 1: Quick scan to list all image files with placeholders
+        Phase 2: On-demand thumbnail loading based on scroll position
+        """
+        # Stop any existing loaders
+        self._stop_image_loading()
+
         self.image_list.clear()
-        self._show_status_message("Loading images...")
+        self._show_status_message("Scanning images...")
 
-        file_list = os.listdir(dir_path)
         thumbnail_size = self.config.thumbnail_size
-        self.image_loader = ImageLoader(dir_path, file_list, thumbnail_size)
-        self.image_loader.image_loaded.connect(self._add_image_to_list)
-        self.image_loader.finished.connect(self._image_loading_finished)
-        self.image_loader.start()
 
-    def _add_image_to_list(self, filename: str, icon: QIcon) -> None:
-        """Add a loaded image to the list."""
+        # Phase 1: Start quick scan
+        self.image_scanner = ImageScanner(dir_path)
+        self.image_scanner.image_found.connect(self._add_image_placeholder)
+        self.image_scanner.finished.connect(self._image_scan_finished)
+        self.image_scanner.start()
+
+        # Phase 2: Start thumbnail loader (will load on demand)
+        self.thumbnail_loader = ThumbnailLoader(
+            dir_path,
+            thumbnail_size,
+            cache=self.thumbnail_cache
+        )
+        self.thumbnail_loader.thumbnail_loaded.connect(self._update_thumbnail)
+        self.thumbnail_loader.start()
+
+        # Connect visibility tracking
+        self.image_list.visible_items_changed.connect(self._on_visible_items_changed)
+
+    def _stop_image_loading(self) -> None:
+        """Stop any active image loading threads."""
+        if self.image_scanner:
+            self.image_scanner.stop()
+            self.image_scanner.wait()
+            self.image_scanner = None
+
+        if self.thumbnail_loader:
+            self.thumbnail_loader.stop()
+            self.thumbnail_loader.wait()
+            self.thumbnail_loader = None
+
+        if self.image_loader:
+            self.image_loader.stop()
+            self.image_loader.wait()
+            self.image_loader = None
+
+        # Disconnect visibility tracking if connected
+        try:
+            self.image_list.visible_items_changed.disconnect(self._on_visible_items_changed)
+        except (TypeError, RuntimeError):
+            pass  # Not connected
+
+    def _add_image_placeholder(self, filename: str) -> None:
+        """Add a placeholder for an image during the scan phase."""
         file_path = os.path.join(self.current_directory, filename)
         size = self.config.thumbnail_size
-        item = ImageListItem(icon, file_path, size)
+        placeholder = create_placeholder_icon(size)
+        item = ImageListItem(placeholder, file_path, size, thumbnail_loaded=False)
+
+        # Check annotation status using the format handler
+        if self.annotation_handler:
+            if self.annotation_handler.is_per_image:
+                item.has_annotation = self.annotation_handler.has_annotation(Path(file_path))
+            else:
+                # For dataset formats, check the cache
+                item.has_annotation = filename in self.annotations_cache and bool(self.annotations_cache[filename])
+
+        if self.hide_tagged_checkbox.isChecked() and item.has_annotation:
+            item.setHidden(True)
+
+        self.image_list.addItem(item)
+
+    def _image_scan_finished(self, total_count: int) -> None:
+        """Handle completion of image scanning (Phase 1)."""
+        self._show_status_message(f"Found {total_count} images, loading thumbnails...")
+        self.image_list.sortItems()
+        self.image_scanner = None
+
+        # Update counts
+        total = self.image_list.count()
+        tagged = sum(
+            1 for i in range(total)
+            if isinstance(self.image_list.item(i), ImageListItem)
+            and self.image_list.item(i).has_annotation
+        )
+
+        self.image_count_label.setText(f"Total Images: {total}")
+        self.tagged_count_label.setText(f"Tagged Images: {tagged}")
+        self.image_browser.update_stats()
+
+        # Trigger initial thumbnail loading for visible items
+        QTimer.singleShot(100, self._load_initial_thumbnails)
+
+    def _load_initial_thumbnails(self) -> None:
+        """Load thumbnails for initially visible items."""
+        if self.thumbnail_loader:
+            items = self.image_list.get_items_needing_thumbnails()
+            if items:
+                self.thumbnail_loader.request_thumbnails(items, priority=0)
+
+    def _on_visible_items_changed(self, filenames: List[str]) -> None:
+        """Handle scroll-triggered visibility changes."""
+        if self.thumbnail_loader and filenames:
+            self.thumbnail_loader.request_thumbnails(filenames, priority=10)
+
+    def _update_thumbnail(self, filename: str, icon: QIcon) -> None:
+        """Update an item with its loaded thumbnail."""
+        item = self.image_list.find_item_by_name(filename)
+        if item:
+            size = self.config.thumbnail_size
+            if item.has_annotation:
+                item.setIcon(add_annotation_marker(icon, size))
+            else:
+                item.setIcon(icon)
+            item.thumbnail_loaded = True
+
+    def _add_image_to_list(self, filename: str, icon: QIcon) -> None:
+        """Add a loaded image to the list (legacy method for fallback)."""
+        file_path = os.path.join(self.current_directory, filename)
+        size = self.config.thumbnail_size
+        item = ImageListItem(icon, file_path, size, thumbnail_loaded=True)
 
         # Check annotation status using the format handler
         if self.annotation_handler:
@@ -744,7 +861,7 @@ class MainWindow(QMainWindow):
         self.image_list.addItem(item)
 
     def _image_loading_finished(self) -> None:
-        """Handle completion of image loading."""
+        """Handle completion of image loading (legacy method)."""
         self._show_status_message("Image loading complete")
         self.image_list.sortItems()
         self.image_loader = None
@@ -2025,8 +2142,11 @@ class MainWindow(QMainWindow):
         # Save current window state for next launch
         self._save_session_state()
 
-        if self.image_loader:
-            self.image_loader.stop()
-            self.image_loader.wait()
+        # Stop all image loading threads
+        self._stop_image_loading()
+
+        # Cleanup thumbnail cache
+        if self.thumbnail_cache:
+            self.thumbnail_cache.cleanup()
 
         super().closeEvent(event)

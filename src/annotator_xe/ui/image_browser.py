@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Set
 
-from PyQt6.QtCore import Qt, QFileInfo, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QFileInfo, QSize, pyqtSignal, QTimer, QRect
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QFont, QPen, QBrush
 from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QWidget, QVBoxLayout, QHBoxLayout,
-    QSlider, QLabel, QLineEdit, QFrame
+    QSlider, QLabel, QLineEdit, QFrame, QAbstractItemView
 )
 
 from ..core.yolo_format import has_annotation
@@ -117,6 +117,80 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 }
 """
 
+# Cache for placeholder icons by size
+_placeholder_icons: dict = {}
+
+
+def create_placeholder_icon(size: int) -> QIcon:
+    """
+    Create a placeholder icon for images not yet loaded.
+
+    Args:
+        size: Size of the placeholder icon
+
+    Returns:
+        QIcon with a gray placeholder design
+    """
+    if size in _placeholder_icons:
+        return _placeholder_icons[size]
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(45, 45, 45))  # Dark gray background
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Draw a subtle image icon in the center
+    icon_size = size // 3
+    center_x = size // 2
+    center_y = size // 2
+
+    # Draw mountain/image icon outline
+    painter.setPen(QPen(QColor(80, 80, 80), max(1, size // 40)))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    # Outer rectangle
+    margin = size // 6
+    painter.drawRoundedRect(margin, margin, size - 2 * margin, size - 2 * margin, 4, 4)
+
+    # Simple mountain shapes
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(70, 70, 70))
+
+    # Small mountain
+    points_small = [
+        (center_x - icon_size // 2, center_y + icon_size // 3),
+        (center_x - icon_size // 6, center_y - icon_size // 6),
+        (center_x + icon_size // 6, center_y + icon_size // 3),
+    ]
+    from PyQt6.QtGui import QPolygon
+    from PyQt6.QtCore import QPoint
+    painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in points_small]))
+
+    # Large mountain
+    points_large = [
+        (center_x - icon_size // 6, center_y + icon_size // 3),
+        (center_x + icon_size // 3, center_y - icon_size // 3),
+        (center_x + icon_size // 2 + icon_size // 6, center_y + icon_size // 3),
+    ]
+    painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in points_large]))
+
+    # Sun circle
+    sun_radius = icon_size // 6
+    painter.setBrush(QColor(70, 70, 70))
+    painter.drawEllipse(
+        center_x - icon_size // 3 - sun_radius,
+        center_y - icon_size // 3,
+        sun_radius * 2,
+        sun_radius * 2
+    )
+
+    painter.end()
+
+    icon = QIcon(pixmap)
+    _placeholder_icons[size] = icon
+    return icon
+
 
 class ImageListItem(QListWidgetItem):
     """
@@ -126,19 +200,27 @@ class ImageListItem(QListWidgetItem):
     and provides sorting by various attributes.
     """
 
-    def __init__(self, icon: QIcon, file_path: str, thumbnail_size: int = 80) -> None:
+    def __init__(
+        self,
+        icon: QIcon,
+        file_path: str,
+        thumbnail_size: int = 80,
+        thumbnail_loaded: bool = True
+    ) -> None:
         """
         Initialize the image list item.
 
         Args:
-            icon: Thumbnail icon for the image
+            icon: Thumbnail icon for the image (or placeholder)
             file_path: Full path to the image file
             thumbnail_size: Size of the thumbnail
+            thumbnail_loaded: Whether the actual thumbnail has been loaded
         """
         super().__init__(icon, "")
         self.file_path = file_path
         self.file_info = QFileInfo(file_path)
         self._thumbnail_size = thumbnail_size
+        self._thumbnail_loaded = thumbnail_loaded
         self._update_size_hint()
 
         self._hidden = False
@@ -204,14 +286,38 @@ class ImageListItem(QListWidgetItem):
         """Get just the filename without path."""
         return os.path.basename(self.file_path)
 
+    @property
+    def thumbnail_loaded(self) -> bool:
+        """Check if the actual thumbnail has been loaded."""
+        return self._thumbnail_loaded
+
+    @thumbnail_loaded.setter
+    def thumbnail_loaded(self, value: bool) -> None:
+        """Set the thumbnail loaded state."""
+        self._thumbnail_loaded = value
+
+    def update_thumbnail(self, icon: QIcon) -> None:
+        """
+        Update the item with a loaded thumbnail.
+
+        Args:
+            icon: The loaded thumbnail icon
+        """
+        self.setIcon(icon)
+        self._thumbnail_loaded = True
+
 
 class SortableImageList(QListWidget):
     """
-    Image list widget with sorting capabilities.
+    Image list widget with sorting capabilities and lazy loading support.
 
     Displays images in an icon grid view with support for
     sorting by name, date modified, or date created.
+    Emits signals when visible items change to support lazy thumbnail loading.
     """
+
+    # Signal emitted when visible items change (list of filenames needing thumbnails)
+    visible_items_changed = pyqtSignal(list)
 
     def __init__(self, parent=None, thumbnail_size: int = 80) -> None:
         """Initialize the sortable image list."""
@@ -221,6 +327,7 @@ class SortableImageList(QListWidget):
         self.sort_order = Qt.SortOrder.AscendingOrder
         self._thumbnail_size = thumbnail_size
         self._filter_text = ""
+        self._last_visible_items: Set[str] = set()
 
         # Configure view mode
         self.setObjectName("imageList")
@@ -229,8 +336,87 @@ class SortableImageList(QListWidget):
         self.setWrapping(True)
         self.setSpacing(8)
         self.setIconSize(QSize(thumbnail_size, thumbnail_size))
-        self.setUniformItemSizes(False)
+        self.setUniformItemSizes(True)  # Enable for better performance
         self.setWordWrap(True)
+
+        # Debounce timer for visibility changes
+        self._visibility_timer = QTimer()
+        self._visibility_timer.setSingleShot(True)
+        self._visibility_timer.setInterval(50)  # 50ms debounce
+        self._visibility_timer.timeout.connect(self._emit_visible_items)
+
+        # Connect scroll events
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+
+    def _on_scroll(self) -> None:
+        """Handle scroll events with debouncing."""
+        self._visibility_timer.start()
+
+    def _emit_visible_items(self) -> None:
+        """Calculate and emit visible items that need thumbnails."""
+        items_needing_thumbnails = self.get_items_needing_thumbnails()
+        if items_needing_thumbnails:
+            self.visible_items_changed.emit(items_needing_thumbnails)
+
+    def get_visible_items_in_viewport(self) -> List[ImageListItem]:
+        """
+        Get list items currently visible in the viewport.
+
+        Returns:
+            List of ImageListItem objects in the visible area
+        """
+        visible = []
+        viewport_rect = self.viewport().rect()
+
+        for i in range(self.count()):
+            item = self.item(i)
+            if isinstance(item, ImageListItem):
+                item_rect = self.visualItemRect(item)
+                if viewport_rect.intersects(item_rect):
+                    visible.append(item)
+
+        return visible
+
+    def get_items_needing_thumbnails(self, buffer_count: int = 50) -> List[str]:
+        """
+        Get filenames of items that need thumbnails loaded.
+
+        Includes visible items plus a buffer above and below.
+
+        Args:
+            buffer_count: Number of items to include above/below visible area
+
+        Returns:
+            List of filenames that need thumbnails
+        """
+        # Find visible items
+        visible_items = self.get_visible_items_in_viewport()
+        if not visible_items:
+            return []
+
+        # Get indices of visible items
+        visible_indices = set()
+        for item in visible_items:
+            row = self.row(item)
+            if row >= 0:
+                visible_indices.add(row)
+
+        if not visible_indices:
+            return []
+
+        # Calculate range with buffer
+        min_idx = max(0, min(visible_indices) - buffer_count)
+        max_idx = min(self.count() - 1, max(visible_indices) + buffer_count)
+
+        # Collect items needing thumbnails
+        needs_loading = []
+        for i in range(min_idx, max_idx + 1):
+            item = self.item(i)
+            if isinstance(item, ImageListItem):
+                if not item.thumbnail_loaded and not item.isHidden():
+                    needs_loading.append(item.filename)
+
+        return needs_loading
 
     def set_thumbnail_size(self, size: int) -> None:
         """
