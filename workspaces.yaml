@@ -45,42 +45,38 @@ _last_session:
     floating: false
     geometry: null
     size:
-      height: 232
-      width: 339
+      height: 274
+      width: 195
     visible: true
   Image Browser:
     area: 2
     floating: false
     geometry: null
     size:
-      height: 702
+      height: 488
       width: 301
     visible: true
   Miniature View:
     area: 2
-    floating: true
-    geometry:
-    - 1139
-    - 75
-    - 280
-    - 519
+    floating: false
+    geometry: null
     size:
-      height: 519
-      width: 280
+      height: 340
+      width: 301
     visible: true
   Shapes:
     area: 1
     floating: false
     geometry: null
     size:
-      height: 469
-      width: 339
+      height: 554
+      width: 195
     visible: true
   main_window:
     geometry:
-      height: 773
-      width: 1050
-      x: 43
-      y: 31
-    qt_state: AAAA/wAAAAD9AAAAAgAAAAAAAAFTAAACvvwCAAAAAvsAAAAmAEMAbABhAHMAcwBpAGYAaQBjAGEAdABpAG8AbgBzAEQAbwBjAGsBAAAALAAAAOgAAADLAP////sAAAAUAFMAaABhAHAAZQBzAEQAbwBjAGsBAAABFQAAAdUAAACdAP///wAAAAEAAAEtAAACvvwCAAAAAvsAAAAgAEkAbQBhAGcAZQBCAHIAbwB3AHMAZQByAEQAbwBjAGsBAAAALAAAAr4AAAEkAP////sAAAAiAE0AaQBuAGkAYQB0AHUAcgBlAFYAaQBlAHcARABvAGMAawMAAARzAAAASwAAARgAAAIHAAABmAAAAr4AAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYATQBhAGkAbgBUAG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA=
+      height: 900
+      width: 1440
+      x: 0
+      y: 0
+    qt_state: AAAA/wAAAAD9AAAAAgAAAAAAAADDAAADPfwCAAAAAvsAAAAmAEMAbABhAHMAcwBpAGYAaQBjAGEAdABpAG8AbgBzAEQAbwBjAGsBAAAALAAAARIAAADLAP////sAAAAUAFMAaABhAHAAZQBzAEQAbwBjAGsBAAABPwAAAioAAACdAP///wAAAAEAAAEtAAADPfwCAAAAAvsAAAAiAE0AaQBuAGkAYQB0AHUAcgBlAFYAaQBlAHcARABvAGMAawEAAAAsAAABVAAAAJ4A////+wAAACAASQBtAGEAZwBlAEIAcgBvAHcAcwBlAHIARABvAGMAawEAAAGBAAAB6AAAASQA////AAADrgAAAz0AAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYATQBhAGkAbgBUAG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA=
     state: normal

@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(4)
 
         self.miniature_view = MiniatureView(self)
         self.miniature_view.view_rect_changed.connect(self._update_main_view)
@@ -318,23 +318,44 @@ class MainWindow(QMainWindow):
         # Zoom controls
         zoom_widget = QWidget()
         zoom_layout = QHBoxLayout(zoom_widget)
-        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.setContentsMargins(4, 4, 4, 4)
+        zoom_layout.setSpacing(4)
 
+        # Fit to view button
+        fit_btn = QPushButton("Fit")
+        fit_btn.setToolTip("Fit image to view")
+        fit_btn.clicked.connect(self._fit_to_view)
+        fit_btn.setFixedWidth(32)
+
+        # Zoom out button
+        zoom_out_btn = QPushButton("-")
+        zoom_out_btn.setToolTip("Zoom out")
+        zoom_out_btn.clicked.connect(self._zoom_out_step)
+        zoom_out_btn.setFixedWidth(24)
+
+        # Zoom slider
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self.zoom_slider.setRange(20, 500)
         self.zoom_slider.setValue(100)
-        self.zoom_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.zoom_slider.setTickInterval(10)
         self.zoom_slider.valueChanged.connect(self._zoom_image)
 
-        reset_zoom_btn = QPushButton("↺")
-        reset_zoom_btn.setToolTip("Reset Zoom")
-        reset_zoom_btn.clicked.connect(self._reset_zoom)
-        reset_zoom_btn.setMaximumWidth(30)
-        reset_zoom_btn.setStyleSheet("font-size: 16px;")
+        # Zoom in button
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setToolTip("Zoom in")
+        zoom_in_btn.clicked.connect(self._zoom_in_step)
+        zoom_in_btn.setFixedWidth(24)
 
-        zoom_layout.addWidget(self.zoom_slider)
-        zoom_layout.addWidget(reset_zoom_btn)
+        # Zoom percentage label
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.zoom_label.setFixedWidth(42)
+        self.zoom_label.setToolTip("Current zoom level")
+
+        zoom_layout.addWidget(fit_btn)
+        zoom_layout.addWidget(zoom_out_btn)
+        zoom_layout.addWidget(self.zoom_slider, 1)
+        zoom_layout.addWidget(zoom_in_btn)
+        zoom_layout.addWidget(self.zoom_label)
         layout.addWidget(zoom_widget)
 
         return widget
@@ -1713,12 +1734,53 @@ class MainWindow(QMainWindow):
     def _zoom_image(self, value: int) -> None:
         """Handle zoom slider change."""
         self.image_label.set_scale_factor(value / 100.0)
+        self.zoom_label.setText(f"{value}%")
         self._update_minimap_view_rect()
 
     def _update_zoom_slider(self, scale_factor: float) -> None:
         """Update zoom slider from drawing area."""
-        self.zoom_slider.setValue(int(scale_factor * 100))
+        value = int(scale_factor * 100)
+        self.zoom_slider.setValue(value)
+        self.zoom_label.setText(f"{value}%")
         self._update_minimap()
+
+    def _zoom_in_step(self) -> None:
+        """Zoom in by a step."""
+        current = self.zoom_slider.value()
+        # Use predefined zoom levels for smoother stepping
+        zoom_levels = [20, 25, 33, 50, 67, 75, 100, 125, 150, 200, 250, 300, 400, 500]
+        for level in zoom_levels:
+            if level > current:
+                self.zoom_slider.setValue(level)
+                return
+        self.zoom_slider.setValue(500)
+
+    def _zoom_out_step(self) -> None:
+        """Zoom out by a step."""
+        current = self.zoom_slider.value()
+        # Use predefined zoom levels for smoother stepping
+        zoom_levels = [20, 25, 33, 50, 67, 75, 100, 125, 150, 200, 250, 300, 400, 500]
+        for level in reversed(zoom_levels):
+            if level < current:
+                self.zoom_slider.setValue(level)
+                return
+        self.zoom_slider.setValue(20)
+
+    def _fit_to_view(self) -> None:
+        """Fit the image to the view."""
+        if not self.image_label.pixmap():
+            return
+        viewport_size = self.image_scroll_area.viewport().size()
+        pixmap_size = self.image_label.pixmap().size()
+
+        # Calculate scale to fit in viewport with some margin
+        scale_x = (viewport_size.width() - 20) / pixmap_size.width()
+        scale_y = (viewport_size.height() - 20) / pixmap_size.height()
+        scale = min(scale_x, scale_y)
+
+        # Clamp to slider range
+        scale_percent = max(20, min(500, int(scale * 100)))
+        self.zoom_slider.setValue(scale_percent)
 
     def _reset_zoom(self) -> None:
         """Reset zoom to 100%."""
