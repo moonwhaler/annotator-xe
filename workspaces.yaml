@@ -45,7 +45,7 @@ _last_session:
     floating: false
     geometry: null
     size:
-      height: 274
+      height: 253
       width: 195
     visible: true
   Image Browser:
@@ -53,7 +53,7 @@ _last_session:
     floating: false
     geometry: null
     size:
-      height: 488
+      height: 451
       width: 301
     visible: true
   Miniature View:
@@ -61,7 +61,7 @@ _last_session:
     floating: false
     geometry: null
     size:
-      height: 340
+      height: 314
       width: 301
     visible: true
   Shapes:
@@ -69,14 +69,14 @@ _last_session:
     floating: false
     geometry: null
     size:
-      height: 554
+      height: 512
       width: 195
     visible: true
   main_window:
     geometry:
-      height: 900
+      height: 837
       width: 1440
       x: 0
-      y: 0
-    qt_state: AAAA/wAAAAD9AAAAAgAAAAAAAADDAAADPfwCAAAAAvsAAAAmAEMAbABhAHMAcwBpAGYAaQBjAGEAdABpAG8AbgBzAEQAbwBjAGsBAAAALAAAARIAAADLAP////sAAAAUAFMAaABhAHAAZQBzAEQAbwBjAGsBAAABPwAAAioAAACdAP///wAAAAEAAAEtAAADPfwCAAAAAvsAAAAiAE0AaQBuAGkAYQB0AHUAcgBlAFYAaQBlAHcARABvAGMAawEAAAAsAAABVAAAAJ4A////+wAAACAASQBtAGEAZwBlAEIAcgBvAHcAcwBlAHIARABvAGMAawEAAAGBAAAB6AAAASQA////AAADrgAAAz0AAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYATQBhAGkAbgBUAG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA=
-    state: normal
+      y: 31
+    qt_state: AAAA/wAAAAD9AAAAAgAAAAAAAADDAAAC/vwCAAAAAvsAAAAmAEMAbABhAHMAcwBpAGYAaQBjAGEAdABpAG8AbgBzAEQAbwBjAGsBAAAALAAAAP0AAADLAP////sAAAAUAFMAaABhAHAAZQBzAEQAbwBjAGsBAAABKgAAAgAAAACdAP///wAAAAEAAAEtAAAC/vwCAAAAAvsAAAAiAE0AaQBuAGkAYQB0AHUAcgBlAFYAaQBlAHcARABvAGMAawEAAAAsAAABOgAAAJ4A////+wAAACAASQBtAGEAZwBlAEIAcgBvAHcAcwBlAHIARABvAGMAawEAAAFnAAABwwAAASQA////AAADrgAAAv4AAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYATQBhAGkAbgBUAG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA=
+    state: maximized

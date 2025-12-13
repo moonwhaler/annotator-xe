@@ -1732,15 +1732,46 @@ class MainWindow(QMainWindow):
     # === Zoom Operations ===
 
     def _zoom_image(self, value: int) -> None:
-        """Handle zoom slider change."""
-        self.image_label.set_scale_factor(value / 100.0)
+        """Handle zoom slider change, preserving viewport center."""
+        old_scale = self.image_label.scale_factor
+        new_scale = value / 100.0
+
+        if old_scale == new_scale:
+            return
+
+        # Get current viewport center in image coordinates
+        viewport = self.image_scroll_area.viewport()
+        h_bar = self.image_scroll_area.horizontalScrollBar()
+        v_bar = self.image_scroll_area.verticalScrollBar()
+
+        # Center of viewport in widget coordinates
+        viewport_center_x = h_bar.value() + viewport.width() / 2
+        viewport_center_y = v_bar.value() + viewport.height() / 2
+
+        # Convert to image coordinates (before scale change)
+        image_center_x = viewport_center_x / old_scale if old_scale > 0 else 0
+        image_center_y = viewport_center_y / old_scale if old_scale > 0 else 0
+
+        # Apply the new scale
+        self.image_label.set_scale_factor(new_scale)
         self.zoom_label.setText(f"{value}%")
+
+        # Calculate new scroll position to keep the same image point centered
+        new_viewport_center_x = image_center_x * new_scale
+        new_viewport_center_y = image_center_y * new_scale
+
+        h_bar.setValue(int(new_viewport_center_x - viewport.width() / 2))
+        v_bar.setValue(int(new_viewport_center_y - viewport.height() / 2))
+
         self._update_minimap_view_rect()
 
     def _update_zoom_slider(self, scale_factor: float) -> None:
-        """Update zoom slider from drawing area."""
+        """Update zoom slider from drawing area (wheel/gesture zoom)."""
         value = int(scale_factor * 100)
+        # Block signals to prevent _zoom_image from re-adjusting scroll
+        self.zoom_slider.blockSignals(True)
         self.zoom_slider.setValue(value)
+        self.zoom_slider.blockSignals(False)
         self.zoom_label.setText(f"{value}%")
         self._update_minimap()
 
@@ -1767,7 +1798,7 @@ class MainWindow(QMainWindow):
         self.zoom_slider.setValue(20)
 
     def _fit_to_view(self) -> None:
-        """Fit the image to the view."""
+        """Fit the image to the view and center it."""
         if not self.image_label.pixmap():
             return
         viewport_size = self.image_scroll_area.viewport().size()
@@ -1780,12 +1811,26 @@ class MainWindow(QMainWindow):
 
         # Clamp to slider range
         scale_percent = max(20, min(500, int(scale * 100)))
+
+        # Block signals and set scale directly to avoid center-preservation logic
+        self.zoom_slider.blockSignals(True)
         self.zoom_slider.setValue(scale_percent)
+        self.zoom_slider.blockSignals(False)
+
+        self.image_label.set_scale_factor(scale_percent / 100.0)
+        self.zoom_label.setText(f"{scale_percent}%")
+
+        # Center the image in the viewport
+        h_bar = self.image_scroll_area.horizontalScrollBar()
+        v_bar = self.image_scroll_area.verticalScrollBar()
+        h_bar.setValue((h_bar.maximum()) // 2)
+        v_bar.setValue((v_bar.maximum()) // 2)
+
+        self._update_minimap_view_rect()
 
     def _reset_zoom(self) -> None:
         """Reset zoom to 100%."""
         self.zoom_slider.setValue(100)
-        self.image_label.set_scale_factor(1.0)
 
     # === Undo/Redo Operations ===
 
