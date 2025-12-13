@@ -1,0 +1,37 @@
+Default:
+  Classifications:
+    area: 2
+    floating: false
+    geometry: null
+    size:
+      height: 300
+      width: 300
+    visible: true
+  Image Browser:
+    area: 1
+    floating: false
+    geometry: null
+    size:
+      height: 300
+      width: 250
+    visible: true
+  Miniature View:
+    area: 2
+    floating: false
+    geometry: null
+    size:
+      height: 300
+      width: 300
+    visible: true
+  Shapes:
+    area: 2
+    floating: false
+    geometry: null
+    size:
+      height: 300
+      width: 300
+    visible: true
+  main_window:
+    size:
+      height: 800
+      width: 1200
