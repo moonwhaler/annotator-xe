@@ -1,18 +1,22 @@
 # Annotator XE
 
-Annotator XE is a powerful and user-friendly desktop application for annotating images with bounding boxes and polygons. It's designed to streamline the process of creating datasets for computer vision and machine learning projects, particularly those using the YOLO (You Only Look Once) format.
+Annotator XE is a powerful and user-friendly desktop application for annotating images with bounding boxes and polygons. It's designed to streamline the process of creating datasets for computer vision and machine learning projects, with native support for multiple annotation formats including YOLO, COCO, Pascal VOC, and CreateML.
 
 ![image](https://github.com/user-attachments/assets/22c4cf92-4d6e-4a88-92fd-2c3d5eef2cf7)
 
 ## Features
 
 - **Intuitive Interface**: Easy-to-use GUI for efficient image annotation
-- **Multiple Annotation Types**: Support for both bounding boxes and polygons
-- **YOLO Integration**: Built-in support for YOLO format, including auto-detection using pre-trained models
+- **Multiple Annotation Types**: Support for both bounding boxes and polygons with vertex editing
+- **Multi-Format Support**: Native export to YOLO, COCO, Pascal VOC, and Apple CreateML formats
+- **AI Auto-Detection**: Integrate YOLOv8 models for automatic object annotation
+- **Full Undo/Redo**: Complete undo/redo support for all annotation operations
 - **Class Management**: Easily add, edit, and delete classification labels
-- **Image Navigation**: Convenient image browser with sorting options
+- **Image Navigation**: Convenient image browser with thumbnails, sorting, and search/filter
 - **Zoom and Pan**: Smooth zooming (20%-500%) and panning for detailed annotations
-- **Minimap**: Quick navigation overview of large images
+- **Minimap**: Quick navigation overview with draggable viewport for large images
+- **GPU Acceleration**: Optional hardware-accelerated rendering via OpenGL
+- **Thumbnail Caching**: Fast disk-based thumbnail cache for responsive browsing
 - **Workspace Layouts**: Save and restore custom UI arrangements
 - **Auto-save**: Optional automatic saving of annotations
 - **Dark Mode**: Supports system-wide dark mode for comfortable use in low-light environments
@@ -74,9 +78,6 @@ annotator-xe
 
 # Or as a Python module
 python -m annotator_xe
-
-# Or directly (legacy)
-python pyQT_YOLO.py
 ```
 
 ### Basic Workflow
@@ -98,52 +99,77 @@ python pyQT_YOLO.py
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl + Z` | Undo |
+| `Ctrl + Shift + Z` | Redo |
 | `Ctrl + Scroll` | Zoom in/out |
 | `Space + Drag` | Pan the image |
 | `Delete` | Delete selected shape or points |
 | `Escape` | Cancel current drawing |
 | `Right-click` | Finish polygon / Context menu |
+| `Double-click` | Finish polygon |
 
-### YOLO Format
+### Annotation Formats
 
-Annotations are saved in YOLO format:
+Annotator XE supports multiple annotation formats with automatic detection:
 
-**Bounding Box** (`.txt` file):
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| **YOLO** | `.txt` | Normalized coordinates (default) |
+| **COCO** | `.json` | Microsoft COCO format |
+| **Pascal VOC** | `.xml` | XML-based format |
+| **CreateML** | `.json` | Apple CreateML format |
+
+**YOLO Format Example:**
+
+Bounding Box:
 ```
 class_id x_center y_center width height
 ```
 
-**Polygon** (`.txt` file):
+Polygon:
 ```
 class_id x1 y1 x2 y2 x3 y3 ... xn yn
 ```
 
-All coordinates are normalized (0-1) relative to image dimensions.
+All YOLO coordinates are normalized (0-1) relative to image dimensions.
 
 ## Project Structure
 
 ```
 annotator-xe/
 ├── src/annotator_xe/
-│   ├── core/                 # Business logic (UI-independent)
-│   │   ├── models.py         # Shape, Annotation data classes
-│   │   ├── config.py         # Configuration management
-│   │   ├── yolo_format.py    # YOLO read/write operations
-│   │   └── detector.py       # YOLO detection wrapper
-│   ├── ui/                   # PyQt6 UI components
-│   │   ├── main_window.py    # Main application window
-│   │   ├── drawing_area.py   # Canvas for drawing
-│   │   ├── minimap.py        # Navigation minimap
-│   │   ├── image_browser.py  # Image list widgets
-│   │   └── dialogs/          # Settings, model selector
-│   ├── workers/              # Background threads
-│   │   └── image_loader.py   # Async image loading
-│   └── utils/                # Utilities
-│       └── workspace.py      # Layout management
-├── tests/                    # Test suite
-├── pyproject.toml            # Modern Python packaging
-├── requirements.txt          # Core dependencies
-└── requirements-dev.txt      # Development dependencies
+│   ├── core/                     # Business logic (UI-independent)
+│   │   ├── models.py             # Shape, Annotation dataclasses
+│   │   ├── config.py             # Configuration management (YAML)
+│   │   ├── annotation_format.py  # Abstract base for format handlers
+│   │   ├── format_registry.py    # Format discovery & registration
+│   │   ├── yolo_format.py        # YOLO annotation I/O
+│   │   ├── coco_format.py        # COCO format support
+│   │   ├── pascal_voc_format.py  # Pascal VOC format support
+│   │   ├── createml_format.py    # Apple CreateML format support
+│   │   ├── detector.py           # YOLO detection wrapper
+│   │   ├── undo_redo.py          # Command pattern implementation
+│   │   └── thumbnail_cache.py    # Disk-based thumbnail caching
+│   ├── ui/                       # PyQt6 UI components
+│   │   ├── main_window.py        # Main application window
+│   │   ├── drawing_area.py       # Canvas (CPU & GPU rendering)
+│   │   ├── minimap.py            # Navigation minimap
+│   │   ├── image_browser.py      # Image list with thumbnails
+│   │   ├── dialogs/
+│   │   │   ├── settings.py       # Settings dialog
+│   │   │   ├── model_selector.py # YOLO model selector
+│   │   │   ├── format_choice.py  # Format selection dialog
+│   │   │   └── import_export.py  # Import/export dialogs
+│   │   └── widgets/              # Custom widgets
+│   ├── workers/                  # Background threads
+│   │   └── image_loader.py       # Async image/thumbnail loading
+│   └── utils/
+│       └── workspace.py          # Layout persistence
+├── tests/                        # Test suite
+├── scripts/                      # Cross-platform automation
+├── pyproject.toml                # Modern Python packaging
+├── requirements.txt              # Core dependencies
+└── requirements-dev.txt          # Development dependencies
 ```
 
 ## Scripts
@@ -209,13 +235,23 @@ black src/annotator_xe            # Formatting
 
 ## Configuration Files
 
-Annotator XE creates the following configuration files in the working directory:
+Annotator XE creates the following configuration files:
 
-| File | Purpose |
-|------|---------|
-| `config.yaml` | User settings (default directory, model path, UI preferences) |
-| `workspaces.yaml` | Saved dock widget layouts |
-| `data.yaml` | Per-directory YOLO class definitions |
+| File | Purpose | Location |
+|------|---------|----------|
+| `config.yaml` | User settings (default directory, model path, UI preferences, GPU settings) | Working directory |
+| `workspaces.yaml` | Saved dock widget layouts | Working directory |
+| `data.yaml` | Per-directory class definitions | Image directory |
+
+### Configurable Settings
+
+- Default directory and YOLO model path
+- Line thickness, font size, thumbnail size
+- Autosave, focus-on-select, zoom-on-select behaviors
+- Thumbnail cache settings (size, max MB)
+- Annotation format (YOLO/COCO/VOC/CreateML)
+- Keyboard shortcuts (finish drawing, delete shape)
+- GPU acceleration toggle
 
 ## Requirements
 
@@ -225,6 +261,7 @@ Annotator XE creates the following configuration files in the working directory:
 - torch >= 2.0.0
 - ultralytics >= 8.0.0
 - Pillow >= 10.0.0
+- PyOpenGL >= 3.1.6 (optional, for GPU acceleration)
 
 ## Updating
 
