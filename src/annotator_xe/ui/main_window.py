@@ -31,7 +31,7 @@ from .dialogs.settings import SettingsDialog
 from .dialogs.model_selector import ModelSelector
 from .drawing_area import DrawingArea
 from .minimap import MiniatureView
-from .image_browser import ImageListItem, SortableImageList, add_annotation_marker
+from .image_browser import ImageListItem, SortableImageList, ImageBrowserWidget, add_annotation_marker
 
 logger = logging.getLogger(__name__)
 
@@ -234,9 +234,12 @@ class MainWindow(QMainWindow):
         """Create the image browser widget."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         # Sorting controls
         sort_layout = QHBoxLayout()
+        sort_layout.setContentsMargins(8, 8, 8, 0)
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Name", "Date Modified", "Date Created"])
@@ -246,22 +249,35 @@ class MainWindow(QMainWindow):
         self.order_combo.addItems(["Ascending", "Descending"])
         self.order_combo.currentTextChanged.connect(self._change_sort_order)
 
-        sort_layout.addWidget(QLabel("Sort by:"))
+        sort_layout.addWidget(QLabel("Sort:"))
         sort_layout.addWidget(self.sort_combo)
         sort_layout.addWidget(self.order_combo)
+        sort_layout.addStretch()
         layout.addLayout(sort_layout)
 
-        # Image list
-        self.image_list = SortableImageList()
-        self.image_list.itemClicked.connect(self._display_image)
-        layout.addWidget(self.image_list)
+        # Modern image browser widget
+        self.image_browser = ImageBrowserWidget(thumbnail_size=self.config.thumbnail_size)
+        self.image_browser.image_list.itemClicked.connect(self._display_image)
+        self.image_browser.thumbnail_size_changed.connect(self._on_thumbnail_size_changed)
+        layout.addWidget(self.image_browser, 1)
+
+        # Convenience reference to the image list
+        self.image_list = self.image_browser.image_list
 
         # Hide tagged checkbox
-        self.hide_tagged_checkbox = QCheckBox("Gray out tagged images")
+        options_layout = QHBoxLayout()
+        options_layout.setContentsMargins(8, 0, 8, 8)
+        self.hide_tagged_checkbox = QCheckBox("Gray out annotated")
         self.hide_tagged_checkbox.stateChanged.connect(self._toggle_tagged_images)
-        layout.addWidget(self.hide_tagged_checkbox)
+        options_layout.addWidget(self.hide_tagged_checkbox)
+        options_layout.addStretch()
+        layout.addLayout(options_layout)
 
         return widget
+
+    def _on_thumbnail_size_changed(self, size: int) -> None:
+        """Handle thumbnail size changes from the browser widget."""
+        self.config_manager.update(thumbnail_size=size)
 
     def _create_minimap_widget(self) -> QWidget:
         """Create the minimap widget."""
@@ -586,7 +602,8 @@ class MainWindow(QMainWindow):
         self._show_status_message("Loading images...")
 
         file_list = os.listdir(dir_path)
-        self.image_loader = ImageLoader(dir_path, file_list)
+        thumbnail_size = self.config.thumbnail_size
+        self.image_loader = ImageLoader(dir_path, file_list, thumbnail_size)
         self.image_loader.image_loaded.connect(self._add_image_to_list)
         self.image_loader.finished.connect(self._image_loading_finished)
         self.image_loader.start()
@@ -594,10 +611,11 @@ class MainWindow(QMainWindow):
     def _add_image_to_list(self, filename: str, icon: QIcon) -> None:
         """Add a loaded image to the list."""
         file_path = os.path.join(self.current_directory, filename)
-        item = ImageListItem(icon, file_path)
+        size = self.config.thumbnail_size
+        item = ImageListItem(icon, file_path, size)
 
         if item.has_annotation:
-            item.setIcon(add_annotation_marker(icon))
+            item.setIcon(add_annotation_marker(icon, size))
 
         if self.hide_tagged_checkbox.isChecked() and item.has_annotation:
             item.setHidden(True)
@@ -619,6 +637,9 @@ class MainWindow(QMainWindow):
 
         self.image_count_label.setText(f"Total Images: {total}")
         self.tagged_count_label.setText(f"Tagged Images: {tagged}")
+
+        # Update the image browser stats
+        self.image_browser.update_stats()
 
     def _display_image(self, item: ImageListItem) -> None:
         """Display an image from the list."""
@@ -730,16 +751,17 @@ class MainWindow(QMainWindow):
         if item and item.has_annotation != has_annotation:
             item.has_annotation = has_annotation
 
+            size = self.config.thumbnail_size
             original_icon = QIcon(
                 QPixmap(item.file_path).scaled(
-                    80, 80,
+                    size, size,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation
                 )
             )
 
             if has_annotation:
-                item.setIcon(add_annotation_marker(original_icon))
+                item.setIcon(add_annotation_marker(original_icon, size))
             else:
                 item.setIcon(original_icon)
 
@@ -756,6 +778,7 @@ class MainWindow(QMainWindow):
             and self.image_list.item(i).has_annotation
         )
         self.tagged_count_label.setText(f"Tagged Images: {tagged}")
+        self.image_browser.update_stats()
 
     # === Classification Operations ===
 

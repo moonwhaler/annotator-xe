@@ -34,6 +34,7 @@ class AppConfig:
     auto_select_on_point_click: bool = True
     finish_drawing_key: str = "Escape"  # Key/combination to finish polygon drawing (empty to disable)
     delete_shape_key: str = "Delete"  # Key/combination to delete selected shape (empty to disable)
+    thumbnail_size: int = 80  # Thumbnail size in pixels (48-160)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -49,6 +50,7 @@ class AppConfig:
             "autoSelectOnPointClick": self.auto_select_on_point_click,
             "finishDrawingKey": self.finish_drawing_key,
             "deleteShapeKey": self.delete_shape_key,
+            "thumbnailSize": self.thumbnail_size,
         }
 
     @classmethod
@@ -66,6 +68,7 @@ class AppConfig:
             auto_select_on_point_click=data.get("autoSelectOnPointClick", True),
             finish_drawing_key=data.get("finishDrawingKey", "Escape"),
             delete_shape_key=data.get("deleteShapeKey", "Delete"),
+            thumbnail_size=data.get("thumbnailSize", 80),
         )
 
 

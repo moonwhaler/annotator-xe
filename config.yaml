@@ -6,6 +6,7 @@ finishDrawingKey: Esc
 focusOnSelect: true
 fontSize: 12
 lineThickness: 2
+thumbnailSize: 59
 yoloModelPath: ''
 zoomOnSelect: true
 zoomOnSelectLevel: fit

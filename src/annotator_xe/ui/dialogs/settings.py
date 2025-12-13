@@ -468,7 +468,7 @@ class SettingsDialog(QDialog):
         # Header
         layout.addWidget(self._create_section_header(
             "Appearance",
-            "Customize how annotations are displayed."
+            "Customize how annotations and images are displayed."
         ))
 
         # Annotations group
@@ -495,6 +495,23 @@ class SettingsDialog(QDialog):
         ))
 
         layout.addWidget(annotations_group)
+
+        # Image Browser group
+        browser_group = QGroupBox("Image Browser")
+        browser_layout = QVBoxLayout(browser_group)
+        browser_layout.setSpacing(4)
+
+        self.thumbnail_size_spinbox = QSpinBox()
+        self.thumbnail_size_spinbox.setRange(48, 160)
+        self.thumbnail_size_spinbox.setSuffix(" px")
+        self.thumbnail_size_spinbox.setSingleStep(8)
+        browser_layout.addWidget(self._create_setting_row(
+            "Thumbnail Size",
+            self.thumbnail_size_spinbox,
+            "Default size of image thumbnails (48-160 pixels)"
+        ))
+
+        layout.addWidget(browser_group)
 
         layout.addStretch()
         return page
@@ -637,6 +654,7 @@ class SettingsDialog(QDialog):
         self.model_path_edit.setText(config.yolo_model_path)
         self.line_thickness_spinbox.setValue(config.line_thickness)
         self.font_size_spinbox.setValue(config.font_size)
+        self.thumbnail_size_spinbox.setValue(config.thumbnail_size)
         self.autosave_checkbox.setChecked(config.autosave)
         self.focus_on_select_checkbox.setChecked(config.focus_on_select)
         self.zoom_on_select_checkbox.setChecked(config.zoom_on_select)
@@ -660,6 +678,7 @@ class SettingsDialog(QDialog):
             yolo_model_path=self.model_path_edit.text(),
             line_thickness=self.line_thickness_spinbox.value(),
             font_size=self.font_size_spinbox.value(),
+            thumbnail_size=self.thumbnail_size_spinbox.value(),
             autosave=self.autosave_checkbox.isChecked(),
             focus_on_select=self.focus_on_select_checkbox.isChecked(),
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
@@ -685,6 +704,7 @@ class SettingsDialog(QDialog):
             yolo_model_path=self.model_path_edit.text(),
             line_thickness=self.line_thickness_spinbox.value(),
             font_size=self.font_size_spinbox.value(),
+            thumbnail_size=self.thumbnail_size_spinbox.value(),
             autosave=self.autosave_checkbox.isChecked(),
             focus_on_select=self.focus_on_select_checkbox.isChecked(),
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
