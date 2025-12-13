@@ -303,15 +303,15 @@ class MainWindow(QMainWindow):
         class_toolbar = QToolBar()
         class_toolbar.setIconSize(QSize(24, 24))
 
-        add_action = QAction(self._create_icon("➕"), "Add Classification", self)
+        add_action = QAction(self._create_icon("plus", 24), "Add Classification", self)
         add_action.triggered.connect(self._add_classification)
         class_toolbar.addAction(add_action)
 
-        edit_action = QAction(self._create_icon("✏️"), "Edit Classification", self)
+        edit_action = QAction(self._create_icon("edit", 24), "Edit Classification", self)
         edit_action.triggered.connect(self._edit_selected_classification)
         class_toolbar.addAction(edit_action)
 
-        delete_action = QAction(self._create_icon("🗑️"), "Delete Classification", self)
+        delete_action = QAction(self._create_icon("delete", 24), "Delete Classification", self)
         delete_action.triggered.connect(self._delete_classification)
         class_toolbar.addAction(delete_action)
 
@@ -346,20 +346,20 @@ class MainWindow(QMainWindow):
         self.addToolBar(self.toolbar)
 
         # Open directory
-        open_action = QAction(self._create_icon("📂"), "Open Directory", self)
+        open_action = QAction(self._create_icon("folder"), "Open Directory", self)
         open_action.triggered.connect(self._open_directory)
         self.toolbar.addAction(open_action)
 
         self.toolbar.addSeparator()
 
         # Undo/Redo
-        self.undo_action = QAction(self._create_icon("↩"), "Undo", self)
+        self.undo_action = QAction(self._create_icon("undo"), "Undo", self)
         self.undo_action.setShortcut("Ctrl+Z")
         self.undo_action.triggered.connect(self._undo)
         self.undo_action.setEnabled(False)
         self.toolbar.addAction(self.undo_action)
 
-        self.redo_action = QAction(self._create_icon("↪"), "Redo", self)
+        self.redo_action = QAction(self._create_icon("redo"), "Redo", self)
         self.redo_action.setShortcut("Ctrl+Shift+Z")
         self.redo_action.triggered.connect(self._redo)
         self.redo_action.setEnabled(False)
@@ -370,38 +370,38 @@ class MainWindow(QMainWindow):
         # Drawing tools
         drawing_tools = QActionGroup(self)
 
-        select_action = QAction(self._create_icon("👆"), "Select", self)
+        select_action = QAction(self._create_icon("select"), "Select", self)
         select_action.setCheckable(True)
         select_action.triggered.connect(lambda: self._set_drawing_tool("select"))
         drawing_tools.addAction(select_action)
 
-        box_action = QAction(self._create_icon("◻️"), "Draw Box", self)
+        box_action = QAction(self._create_icon("box"), "Draw Box", self)
         box_action.setCheckable(True)
         box_action.triggered.connect(lambda: self._set_drawing_tool("box"))
         drawing_tools.addAction(box_action)
 
-        polygon_action = QAction(self._create_icon("🔺"), "Draw Polygon", self)
+        polygon_action = QAction(self._create_icon("polygon"), "Draw Polygon", self)
         polygon_action.setCheckable(True)
         polygon_action.triggered.connect(lambda: self._set_drawing_tool("polygon"))
         drawing_tools.addAction(polygon_action)
 
         # Save
-        save_action = QAction(self._create_icon("💾"), "Save YOLO", self)
+        save_action = QAction(self._create_icon("save"), "Save YOLO", self)
         save_action.triggered.connect(self._save_yolo)
         self.toolbar.addAction(save_action)
 
         # Model selection
-        select_model_action = QAction(self._create_icon("🤖"), "Select Model", self)
+        select_model_action = QAction(self._create_icon("model"), "Select Model", self)
         select_model_action.triggered.connect(self._select_model)
         self.toolbar.addAction(select_model_action)
 
         # Auto detect
-        detect_action = QAction(self._create_icon("🔍"), "Auto Detect", self)
+        detect_action = QAction(self._create_icon("detect"), "Auto Detect", self)
         detect_action.triggered.connect(self._auto_detect)
         self.toolbar.addAction(detect_action)
 
         # Settings
-        settings_action = QAction(self._create_icon("⚙️"), "Settings", self)
+        settings_action = QAction(self._create_icon("settings"), "Settings", self)
         settings_action.triggered.connect(self._open_settings)
         self.toolbar.addAction(settings_action)
 
@@ -496,19 +496,45 @@ class MainWindow(QMainWindow):
         self.image_scroll_area.viewport().installEventFilter(self)
 
     @staticmethod
-    def _create_icon(text: str) -> QIcon:
-        """Create an icon from emoji text."""
-        app = QApplication.instance()
-        palette = app.palette()
-        is_dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
+    def _create_icon(name: str, size: int = 32) -> QIcon:
+        """Create an icon from Unicode emoji/symbol.
 
-        pixmap = QPixmap(32, 32)
+        Args:
+            name: Icon identifier
+            size: Icon size in pixels
+        """
+        # Map icon names to Unicode symbols
+        icons = {
+            "folder": "📂",
+            "undo": "↩",
+            "redo": "↪",
+            "select": "↖",
+            "box": "▢",
+            "polygon": "⬡",
+            "save": "💾",
+            "model": "🤖",
+            "detect": "🔍",
+            "settings": "⚙",
+            "plus": "➕",
+            "edit": "✏",
+            "delete": "🗑",
+        }
+
+        symbol = icons.get(name, name)
+
+        pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(pixmap)
-        painter.setFont(QFont("Segoe UI Emoji", 20))
-        painter.setPen(Qt.GlobalColor.white if is_dark else Qt.GlobalColor.black)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Use system font for better emoji rendering
+        font_size = int(size * 0.65)
+        font = QFont()
+        font.setPointSize(font_size)
+        painter.setFont(font)
+
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, symbol)
         painter.end()
 
         return QIcon(pixmap)
