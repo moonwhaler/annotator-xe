@@ -92,6 +92,7 @@ class DrawingArea(QLabel):
         self.hover_point: Optional[Tuple[Shape, int]] = None
         self.hover_edge: Optional[Tuple[Shape, int]] = None
         self.hover_shape: Optional[Shape] = None
+        self._last_mouse_pos: Optional[QPointF] = None  # For edge preview point
 
         self.panning = False
         self.pan_start = QPoint()
@@ -300,6 +301,7 @@ class DrawingArea(QLabel):
         """Handle mouse move events."""
         pos = event.position()
         transformed_pos = self._transform_pos(pos)
+        self._last_mouse_pos = transformed_pos
 
         if self.panning:
             self._handle_pan(pos)
@@ -502,6 +504,28 @@ class DrawingArea(QLabel):
             painter.setPen(QPen(QColor(0, 120, 215), 1 / self.scale_factor, Qt.PenStyle.DashLine))
             painter.setBrush(QColor(0, 120, 215, 30))
             painter.drawRect(rect)
+
+        # Draw edge hover highlight and preview point (when polygon tool is active and not drawing)
+        if self.hover_edge and self.current_tool == "polygon" and not self.drawing:
+            shape, edge_index = self.hover_edge
+            p1 = shape.points[edge_index]
+            p2 = shape.points[(edge_index + 1) % len(shape.points)]
+
+            # Draw highlighted edge
+            highlight_color = QColor(0, 200, 255)  # Cyan
+            painter.setPen(QPen(highlight_color, (self.line_thickness + 2) / self.scale_factor))
+            painter.drawLine(p1, p2)
+
+            # Draw preview point on the edge
+            if self._last_mouse_pos:
+                preview_point = self._closest_point_on_line(self._last_mouse_pos, p1, p2)
+                # Draw outer ring
+                painter.setPen(QPen(highlight_color, 2 / self.scale_factor))
+                painter.setBrush(QColor(255, 255, 255, 200))
+                painter.drawEllipse(preview_point, 6 / self.scale_factor, 6 / self.scale_factor)
+                # Draw inner dot
+                painter.setBrush(highlight_color)
+                painter.drawEllipse(preview_point, 3 / self.scale_factor, 3 / self.scale_factor)
 
     # === Drawing Helper Methods ===
 
@@ -991,6 +1015,31 @@ class DrawingArea(QLabel):
             return (p - b).manhattanLength()
         else:
             return abs(n.x() * pa.y() - n.y() * pa.x()) / ((n.x() ** 2 + n.y() ** 2) ** 0.5)
+
+    def _closest_point_on_line(
+        self,
+        p: QPointF,
+        a: QPointF,
+        b: QPointF
+    ) -> QPointF:
+        """Find the closest point on line segment a-b to point p."""
+        if a == b:
+            return QPointF(a)
+
+        # Vector from a to b
+        ab = b - a
+        # Vector from a to p
+        ap = p - a
+
+        # Project ap onto ab, getting the parameter t
+        ab_squared = ab.x() ** 2 + ab.y() ** 2
+        t = (ap.x() * ab.x() + ap.y() * ab.y()) / ab_squared
+
+        # Clamp t to [0, 1] to stay on the segment
+        t = max(0.0, min(1.0, t))
+
+        # Calculate the closest point
+        return QPointF(a.x() + t * ab.x(), a.y() + t * ab.y())
 
     # === Public Methods ===
 
