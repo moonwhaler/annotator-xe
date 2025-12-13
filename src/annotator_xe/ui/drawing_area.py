@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal, QPoint, QEvent
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QFont, QPainterPath, QPolygonF,
     QPixmap, QFontMetrics, QMouseEvent, QKeyEvent, QWheelEvent,
-    QNativeGestureEvent
+    QNativeGestureEvent, QKeySequence
 )
 from PyQt6.QtWidgets import QLabel, QMenu, QInputDialog, QScrollArea, QGestureEvent
 from PyQt6.QtWidgets import QApplication
@@ -39,6 +39,7 @@ class DrawingArea(QLabel):
     points_deleted = pyqtSignal()
     shape_created = pyqtSignal()
     select_mode_requested = pyqtSignal()
+    shape_selected = pyqtSignal(object)  # Emits Shape or None when selection changes in viewport
 
     # Constants
     MIN_ZOOM = 0.2
@@ -58,6 +59,7 @@ class DrawingArea(QLabel):
         self.line_thickness = 2
         self.font_size = 10
         self.auto_select_on_point_click = True
+        self.finish_drawing_key = "Escape"  # Key/combination to finish drawing
 
         # Undo/Redo manager
         self.undo_manager = UndoRedoManager()
@@ -413,9 +415,39 @@ class DrawingArea(QLabel):
             if not self.panning:
                 self.panning = True
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
-        elif event.key() == Qt.Key.Key_Escape:
+        elif self.finish_drawing_key and self._matches_key_sequence(event, self.finish_drawing_key):
             self.finish_drawing()
         super().keyPressEvent(event)
+
+    def _matches_key_sequence(self, event: QKeyEvent, key_sequence_str: str) -> bool:
+        """Check if a key event matches a configured key sequence string."""
+        if not key_sequence_str:
+            return False
+
+        # Build the key combination from the event
+        key = event.key()
+        modifiers = event.modifiers()
+
+        # Ignore pure modifier key presses
+        if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+            return False
+
+        # Build combined key with modifiers
+        combined = key
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            combined |= Qt.KeyboardModifier.ControlModifier.value
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            combined |= Qt.KeyboardModifier.ShiftModifier.value
+        if modifiers & Qt.KeyboardModifier.AltModifier:
+            combined |= Qt.KeyboardModifier.AltModifier.value
+        if modifiers & Qt.KeyboardModifier.MetaModifier:
+            combined |= Qt.KeyboardModifier.MetaModifier.value
+
+        # Create key sequence from the event and compare
+        event_sequence = QKeySequence(combined)
+        config_sequence = QKeySequence(key_sequence_str)
+
+        return event_sequence == config_sequence
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:
         """Handle key release events."""
@@ -600,6 +632,7 @@ class DrawingArea(QLabel):
         shape.selected = True
         self.selected_shape = shape
         self.selected_points = [(shape, point_index)]
+        self.shape_selected.emit(shape)
 
         if shape.type == ShapeType.BOX:
             # For boxes, set up resize handle
@@ -672,6 +705,7 @@ class DrawingArea(QLabel):
                     self._move_start_points = [QPointF(p) for p in shape.points]
                     shape.selected = True
                     self.selected_shape = shape
+                    self.shape_selected.emit(shape)
                     return
             elif shape.type == ShapeType.POLYGON:
                 for i, point in enumerate(shape.points):
@@ -690,6 +724,7 @@ class DrawingArea(QLabel):
                         self._point_move_index = i
                         shape.selected = True
                         self.selected_shape = shape
+                        self.shape_selected.emit(shape)
                         self.update()
                         return
 
@@ -697,6 +732,7 @@ class DrawingArea(QLabel):
                 self.moving_shape = True
                 shape.selected = True
                 self.selected_shape = shape
+                self.shape_selected.emit(shape)
                 self.move_start_point = self._inverse_transform_pos(pos)
                 # Capture starting points for undo
                 self._move_start_points = [QPointF(p) for p in shape.points]
@@ -707,6 +743,7 @@ class DrawingArea(QLabel):
         self._selection_rect_end = pos
         self._drawing_selection_rect = True
         self.selected_shape = None
+        self.shape_selected.emit(None)
         self.update()
 
     def _handle_move_click(self, pos: QPointF) -> None:
@@ -714,6 +751,7 @@ class DrawingArea(QLabel):
         for shape in self.shapes:
             if self._shape_contains_point(shape, pos):
                 self.selected_shape = shape
+                self.shape_selected.emit(shape)
                 self.moving_shape = True
                 self.move_start_point = self._inverse_transform_pos(pos)
                 break

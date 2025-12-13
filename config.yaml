@@ -1,6 +1,7 @@
 autoSelectOnPointClick: true
 autosave: false
 defaultDirectory: ''
+finishDrawingKey: Esc
 focusOnSelect: true
 fontSize: 12
 lineThickness: 2

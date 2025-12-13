@@ -8,8 +8,9 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QTabWidget, QWidget,
     QLineEdit, QPushButton, QSpinBox, QCheckBox, QDialogButtonBox,
-    QFileDialog, QComboBox
+    QFileDialog, QComboBox, QKeySequenceEdit
 )
+from PyQt6.QtGui import QKeySequence
 
 from ...core.config import AppConfig, ConfigManager
 
@@ -120,6 +121,10 @@ class SettingsDialog(QDialog):
         self.auto_select_checkbox = QCheckBox("Auto-switch to select mode on point click")
         layout.addRow("", self.auto_select_checkbox)
 
+        self.finish_drawing_key_edit = QKeySequenceEdit()
+        self.finish_drawing_key_edit.setToolTip("Key or combination to finish polygon drawing (clear to disable)")
+        layout.addRow("Finish drawing key:", self.finish_drawing_key_edit)
+
         widget.setLayout(layout)
         return widget
 
@@ -158,6 +163,10 @@ class SettingsDialog(QDialog):
         if index >= 0:
             self.zoom_level_combo.setCurrentIndex(index)
         self.auto_select_checkbox.setChecked(config.auto_select_on_point_click)
+        if config.finish_drawing_key:
+            self.finish_drawing_key_edit.setKeySequence(QKeySequence(config.finish_drawing_key))
+        else:
+            self.finish_drawing_key_edit.clear()
 
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
@@ -170,7 +179,8 @@ class SettingsDialog(QDialog):
             focus_on_select=self.focus_on_select_checkbox.isChecked(),
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
             zoom_on_select_level=self.zoom_level_combo.currentData(),
-            auto_select_on_point_click=self.auto_select_checkbox.isChecked()
+            auto_select_on_point_click=self.auto_select_checkbox.isChecked(),
+            finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString()
         )
 
         self.config_manager.save(config)
@@ -193,5 +203,6 @@ class SettingsDialog(QDialog):
             focus_on_select=self.focus_on_select_checkbox.isChecked(),
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
             zoom_on_select_level=self.zoom_level_combo.currentData(),
-            auto_select_on_point_click=self.auto_select_checkbox.isChecked()
+            auto_select_on_point_click=self.auto_select_checkbox.isChecked(),
+            finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString()
         )

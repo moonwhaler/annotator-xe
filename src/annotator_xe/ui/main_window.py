@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         self.image_label.line_thickness = self.config.line_thickness
         self.image_label.font_size = self.config.font_size
         self.image_label.auto_select_on_point_click = self.config.auto_select_on_point_click
+        self.image_label.finish_drawing_key = self.config.finish_drawing_key
 
         self.image_scroll_area.setWidget(self.image_label)
         self.image_scroll_area.setWidgetResizable(True)
@@ -482,6 +483,7 @@ class MainWindow(QMainWindow):
         self.image_label.shape_created.connect(self._on_shape_created)
         self.image_label.points_deleted.connect(self._on_points_deleted)
         self.image_label.select_mode_requested.connect(self._switch_to_select_mode)
+        self.image_label.shape_selected.connect(self._on_shape_selected_in_viewport)
 
         # Undo/Redo state changes
         self.image_label.undo_manager.state_changed.connect(self._update_undo_redo_state)
@@ -865,6 +867,33 @@ class MainWindow(QMainWindow):
                 elif self.config.focus_on_select:
                     self._focus_on_shape(shape)
 
+    def _on_shape_selected_in_viewport(self, shape: object) -> None:
+        """Update list selection when a shape is selected in the viewport.
+
+        This is a one-way sync: viewport -> list only.
+        Does not trigger zoom/focus behavior.
+        """
+        # Block signals to prevent _select_shape_from_list from being called
+        self.shape_list.blockSignals(True)
+        try:
+            if shape is None:
+                self.shape_list.clearSelection()
+            else:
+                # Find the shape's index in the shapes list
+                try:
+                    index = self.image_label.shapes.index(shape)
+                    # Select the corresponding item in the list
+                    for i in range(self.shape_list.count()):
+                        item = self.shape_list.item(i)
+                        if item.data(Qt.ItemDataRole.UserRole) == index:
+                            self.shape_list.setCurrentItem(item)
+                            break
+                except ValueError:
+                    # Shape not found in list
+                    self.shape_list.clearSelection()
+        finally:
+            self.shape_list.blockSignals(False)
+
     def _delete_selected_shape_from_list(self) -> None:
         """Delete the selected shape from the list."""
         selected = self.shape_list.selectedItems()
@@ -1210,6 +1239,7 @@ class MainWindow(QMainWindow):
         self.image_label.line_thickness = config.line_thickness
         self.image_label.font_size = config.font_size
         self.image_label.auto_select_on_point_click = config.auto_select_on_point_click
+        self.image_label.finish_drawing_key = config.finish_drawing_key
         self.image_label.update()
 
     # === Workspace Operations ===
