@@ -39,6 +39,7 @@ class AppConfig:
     thumbnail_cache_max_mb: int = 500  # Maximum thumbnail cache size in MB
     default_annotation_format: str = "yolo"  # Default format for new directories
     auto_detect_format: bool = True  # Auto-detect format when opening directory
+    gpu_acceleration: bool = False  # Use GPU for hardware-accelerated image rendering
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -59,6 +60,7 @@ class AppConfig:
             "thumbnailCacheMaxMb": self.thumbnail_cache_max_mb,
             "defaultAnnotationFormat": self.default_annotation_format,
             "autoDetectFormat": self.auto_detect_format,
+            "gpuAcceleration": self.gpu_acceleration,
         }
 
     @classmethod
@@ -81,6 +83,7 @@ class AppConfig:
             thumbnail_cache_max_mb=data.get("thumbnailCacheMaxMb", 500),
             default_annotation_format=data.get("defaultAnnotationFormat", "yolo"),
             auto_detect_format=data.get("autoDetectFormat", True),
+            gpu_acceleration=data.get("gpuAcceleration", False),
         )
 
 

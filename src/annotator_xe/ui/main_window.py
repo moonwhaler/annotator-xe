@@ -1930,6 +1930,10 @@ class MainWindow(QMainWindow):
         self.image_label.auto_select_on_point_click = config.auto_select_on_point_click
         self.image_label.finish_drawing_key = config.finish_drawing_key
         self.image_label.delete_shape_key = config.delete_shape_key
+
+        # Apply GPU acceleration setting (takes effect immediately)
+        self.image_label.set_gpu_acceleration(config.gpu_acceleration)
+
         self.image_label.update()
 
     # === Workspace Operations ===

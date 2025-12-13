@@ -7,7 +7,10 @@ deleteShapeKey: Ctrl+Backspace
 finishDrawingKey: Esc
 focusOnSelect: true
 fontSize: 12
+gpuAcceleration: true
 lineThickness: 2
+thumbnailCacheEnabled: true
+thumbnailCacheMaxMb: 500
 thumbnailSize: 59
 yoloModelPath: ''
 zoomOnSelect: true

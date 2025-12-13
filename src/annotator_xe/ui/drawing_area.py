@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal, QPoint, QEvent
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QFont, QPainterPath, QPolygonF,
     QPixmap, QFontMetrics, QMouseEvent, QKeyEvent, QWheelEvent,
-    QNativeGestureEvent, QKeySequence
+    QNativeGestureEvent, QKeySequence, QImage
 )
-from PyQt6.QtWidgets import QLabel, QMenu, QInputDialog, QScrollArea, QGestureEvent
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import (
+    QLabel, QMenu, QInputDialog, QScrollArea, QGestureEvent,
+    QApplication, QWidget, QStackedLayout
+)
 
 from ..core.models import Shape, ShapeType
 from ..core.undo_redo import (
@@ -22,13 +25,433 @@ from ..core.undo_redo import (
 
 logger = logging.getLogger(__name__)
 
+# Check if OpenGL is available
+_OPENGL_AVAILABLE = False
+try:
+    from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+    from PyQt6.QtOpenGL import QOpenGLShaderProgram, QOpenGLShader
+    import OpenGL.GL as gl
+    _OPENGL_AVAILABLE = True
+except ImportError:
+    logger.info("OpenGL not available - GPU acceleration disabled")
 
-class DrawingArea(QLabel):
+
+def is_opengl_available() -> bool:
+    """Check if OpenGL is available for GPU acceleration."""
+    return _OPENGL_AVAILABLE
+
+
+@dataclass
+class RenderState:
+    """
+    Shared rendering state between CPU and GPU backends.
+
+    Contains all data needed to render the annotation canvas.
+    """
+    # Image
+    pixmap: Optional[QPixmap] = None
+    scaled_pixmap: Optional[QPixmap] = None
+
+    # Shapes
+    shapes: List[Shape] = field(default_factory=list)
+    current_shape: Optional[Shape] = None
+    selected_shape: Optional[Shape] = None
+    selected_points: List[Tuple] = field(default_factory=list)
+
+    # Hover state
+    hover_point: Optional[Tuple] = None
+    hover_edge: Optional[Tuple] = None
+    hover_shape: Optional[Shape] = None
+    moving_point: Optional[QPointF] = None
+    _last_mouse_pos: Optional[QPointF] = None
+
+    # Selection rectangle
+    selection_rect_start: Optional[QPointF] = None
+    selection_rect_end: Optional[QPointF] = None
+    drawing_selection_rect: bool = False
+
+    # View state
+    scale_factor: float = 1.0
+    current_tool: Optional[str] = None
+    drawing: bool = False
+
+    # Visual settings
+    line_thickness: int = 2
+    font_size: int = 10
+    box_color: QColor = field(default_factory=lambda: QColor("#FF0000"))
+    polygon_color: QColor = field(default_factory=lambda: QColor("#00FF00"))
+
+
+class RenderBackendMixin:
+    """
+    Mixin providing common rendering methods for both CPU and GPU backends.
+
+    Contains the shape drawing and label rendering logic that's shared
+    between QPainter-based rendering approaches.
+    """
+
+    def _draw_shape(self, painter: QPainter, shape: Shape, state: RenderState) -> None:
+        """Draw a single shape with its label and points."""
+        color = shape.color if hasattr(shape, "color") else (
+            state.box_color if shape.type == ShapeType.BOX else state.polygon_color
+        )
+
+        if shape == state.selected_shape:
+            color = QColor(255, 255, 0, 128)
+
+        painter.setPen(QPen(color, state.line_thickness / state.scale_factor))
+        painter.setBrush(QColor(color.red(), color.green(), color.blue(), 64))
+
+        if shape.type == ShapeType.BOX:
+            painter.drawRect(QRectF(shape.points[0], shape.points[1]).normalized())
+        elif shape.type == ShapeType.POLYGON:
+            painter.drawPolygon(QPolygonF(shape.points))
+
+        if shape.label:
+            self._draw_label(painter, shape.label, shape.points[0], color, state)
+
+        # Draw points
+        for i, point in enumerate(shape.points):
+            if state.hover_point and shape == state.hover_point[0] and i == state.hover_point[1]:
+                painter.setBrush(QColor(255, 0, 0, 128))
+                painter.drawEllipse(point, 5 / state.scale_factor, 5 / state.scale_factor)
+            elif point == state.moving_point:
+                painter.setBrush(QColor(255, 0, 0))
+                painter.drawEllipse(point, 5 / state.scale_factor, 5 / state.scale_factor)
+            else:
+                painter.setBrush(QColor(0, 255, 0))
+                painter.drawEllipse(point, 3 / state.scale_factor, 3 / state.scale_factor)
+
+    def _draw_label(
+        self,
+        painter: QPainter,
+        label: str,
+        point: QPointF,
+        color: QColor,
+        state: RenderState
+    ) -> None:
+        """Draw a label with background at the given position."""
+        adjusted_font_size = state.font_size / state.scale_factor
+        font = QFont("Arial", int(adjusted_font_size))
+        font.setPointSizeF(adjusted_font_size)
+        font_metrics = QFontMetrics(font)
+        text_width = font_metrics.horizontalAdvance(label)
+        text_height = font_metrics.height()
+
+        padding = 4 / state.scale_factor
+        rect_width = text_width + 2 * padding
+        rect_height = text_height + 2 * padding
+
+        background_rect = QRectF(
+            point.x(),
+            point.y() - rect_height,
+            rect_width,
+            rect_height
+        )
+
+        background_color = QColor(color)
+        background_color.setAlpha(180)
+
+        brightness = (
+            background_color.red() * 299 +
+            background_color.green() * 587 +
+            background_color.blue() * 114
+        ) / 1000
+        text_color = Qt.GlobalColor.black if brightness > 128 else Qt.GlobalColor.white
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(background_color)
+        painter.drawRect(background_rect)
+
+        painter.setFont(font)
+        painter.setPen(text_color)
+        painter.drawText(background_rect, Qt.AlignmentFlag.AlignCenter, label)
+
+    def _draw_overlays(self, painter: QPainter, state: RenderState) -> None:
+        """Draw selection rectangles, hover highlights, and other overlays."""
+        # Draw selected points
+        for shape, point_index in state.selected_points:
+            point = shape.points[point_index]
+            painter.setBrush(QColor(255, 255, 0, 200))
+            painter.drawEllipse(point, 6 / state.scale_factor, 6 / state.scale_factor)
+
+        # Draw selection rectangle
+        if state.drawing_selection_rect and state.selection_rect_start and state.selection_rect_end:
+            rect = QRectF(state.selection_rect_start, state.selection_rect_end).normalized()
+            painter.setPen(QPen(QColor(0, 120, 215), 1 / state.scale_factor, Qt.PenStyle.DashLine))
+            painter.setBrush(QColor(0, 120, 215, 30))
+            painter.drawRect(rect)
+
+        # Draw edge hover highlight and preview point
+        if state.hover_edge and state.current_tool == "polygon" and not state.drawing:
+            shape, edge_index = state.hover_edge
+            p1 = shape.points[edge_index]
+            p2 = shape.points[(edge_index + 1) % len(shape.points)]
+
+            highlight_color = QColor(0, 200, 255)
+            painter.setPen(QPen(highlight_color, (state.line_thickness + 2) / state.scale_factor))
+            painter.drawLine(p1, p2)
+
+            if state._last_mouse_pos:
+                preview_point = self._closest_point_on_line(state._last_mouse_pos, p1, p2)
+                painter.setPen(QPen(highlight_color, 2 / state.scale_factor))
+                painter.setBrush(QColor(255, 255, 255, 200))
+                painter.drawEllipse(preview_point, 6 / state.scale_factor, 6 / state.scale_factor)
+                painter.setBrush(highlight_color)
+                painter.drawEllipse(preview_point, 3 / state.scale_factor, 3 / state.scale_factor)
+
+    def _closest_point_on_line(self, p: QPointF, a: QPointF, b: QPointF) -> QPointF:
+        """Find the closest point on line segment a-b to point p."""
+        if a == b:
+            return QPointF(a)
+
+        ab = b - a
+        ap = p - a
+        ab_squared = ab.x() ** 2 + ab.y() ** 2
+        t = (ap.x() * ab.x() + ap.y() * ab.y()) / ab_squared
+        t = max(0.0, min(1.0, t))
+
+        return QPointF(a.x() + t * ab.x(), a.y() + t * ab.y())
+
+
+class CPURenderBackend(QLabel, RenderBackendMixin):
+    """
+    CPU-based rendering backend using QPainter.
+
+    This is the default renderer that uses Qt's software rendering
+    for image display and annotation drawing.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._state: Optional[RenderState] = None
+        self._scaled_pixmap: Optional[QPixmap] = None
+
+    def set_render_state(self, state: RenderState) -> None:
+        """Set the render state for drawing."""
+        self._state = state
+
+    def update_scaled_pixmap(self) -> None:
+        """Update the scaled pixmap based on current scale factor."""
+        if self._state and self._state.pixmap and not self._state.pixmap.isNull():
+            self._scaled_pixmap = self._state.pixmap.scaled(
+                self._state.pixmap.size() * self._state.scale_factor,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.setFixedSize(self._scaled_pixmap.size())
+            self._state.scaled_pixmap = self._scaled_pixmap
+
+    def paintEvent(self, event) -> None:
+        """Paint the canvas with image and shapes."""
+        super().paintEvent(event)
+
+        if not self._state:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw image
+        if self._scaled_pixmap and not self._scaled_pixmap.isNull():
+            painter.drawPixmap(self.rect(), self._scaled_pixmap)
+
+        # Apply scale for annotations
+        painter.scale(self._state.scale_factor, self._state.scale_factor)
+
+        # Draw shapes
+        for shape in self._state.shapes:
+            self._draw_shape(painter, shape, self._state)
+
+        # Draw current shape being drawn
+        if self._state.current_shape:
+            self._draw_shape(painter, self._state.current_shape, self._state)
+
+        # Draw overlays (selection, hover states)
+        self._draw_overlays(painter, self._state)
+
+
+class GPURenderBackend(RenderBackendMixin):
+    """
+    GPU-accelerated rendering backend using OpenGL.
+
+    Uses QOpenGLWidget for hardware-accelerated image display
+    while falling back to QPainter for annotation rendering.
+    This hybrid approach provides GPU acceleration for the most
+    expensive operation (image scaling) while maintaining
+    compatibility with existing annotation rendering code.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        if not _OPENGL_AVAILABLE:
+            raise RuntimeError("OpenGL is not available")
+
+        # Import here to avoid issues if OpenGL not available
+        from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+
+        # Create the actual widget
+        self._widget = _GPURenderWidget(parent)
+        self._widget._backend = self
+        self._state: Optional[RenderState] = None
+        self._texture_id: int = 0
+        self._texture_needs_update = True
+
+    @property
+    def widget(self) -> QWidget:
+        """Return the underlying Qt widget."""
+        return self._widget
+
+    def set_render_state(self, state: RenderState) -> None:
+        """Set the render state for drawing."""
+        self._state = state
+        self._widget._state = state
+
+    def update_scaled_pixmap(self) -> None:
+        """Mark texture for update (GPU handles scaling)."""
+        self._texture_needs_update = True
+        if self._state and self._state.pixmap and not self._state.pixmap.isNull():
+            # Set widget size based on scaled dimensions
+            scaled_size = self._state.pixmap.size() * self._state.scale_factor
+            self._widget.setFixedSize(scaled_size.toSize())
+
+    def setFixedSize(self, *args):
+        """Forward setFixedSize to the widget."""
+        self._widget.setFixedSize(*args)
+
+    def update(self):
+        """Trigger a repaint."""
+        self._widget.update()
+
+    def size(self):
+        """Return widget size."""
+        return self._widget.size()
+
+
+if _OPENGL_AVAILABLE:
+    class _GPURenderWidget(QOpenGLWidget, RenderBackendMixin):
+        """Internal OpenGL widget for GPU rendering."""
+
+        def __init__(self, parent: Optional[QWidget] = None) -> None:
+            super().__init__(parent)
+            self._state: Optional[RenderState] = None
+            self._backend: Optional[GPURenderBackend] = None
+            self._texture_id: int = 0
+            self._gl_initialized = False
+
+        def initializeGL(self) -> None:
+            """Initialize OpenGL context."""
+            gl.glClearColor(0.0, 0.0, 0.0, 1.0)
+            gl.glEnable(gl.GL_TEXTURE_2D)
+            gl.glEnable(gl.GL_BLEND)
+            gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+            self._gl_initialized = True
+
+        def resizeGL(self, width: int, height: int) -> None:
+            """Handle resize."""
+            gl.glViewport(0, 0, width, height)
+            gl.glMatrixMode(gl.GL_PROJECTION)
+            gl.glLoadIdentity()
+            gl.glOrtho(0, width, height, 0, -1, 1)
+            gl.glMatrixMode(gl.GL_MODELVIEW)
+            gl.glLoadIdentity()
+
+        def paintGL(self) -> None:
+            """Render the image using OpenGL."""
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+
+            if not self._state or not self._state.pixmap:
+                return
+
+            # Upload texture if needed
+            if self._backend and self._backend._texture_needs_update:
+                self._upload_texture()
+                self._backend._texture_needs_update = False
+
+            # Draw image as textured quad
+            if self._texture_id:
+                self._draw_image()
+
+        def _upload_texture(self) -> None:
+            """Upload QPixmap to OpenGL texture."""
+            if not self._state or not self._state.pixmap or self._state.pixmap.isNull():
+                return
+
+            image = self._state.pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+            image = image.mirrored(False, True)  # OpenGL has inverted Y
+
+            if self._texture_id == 0:
+                self._texture_id = gl.glGenTextures(1)
+
+            gl.glBindTexture(gl.GL_TEXTURE_2D, self._texture_id)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+
+            ptr = image.bits()
+            ptr.setsize(image.sizeInBytes())
+
+            gl.glTexImage2D(
+                gl.GL_TEXTURE_2D, 0, gl.GL_RGBA,
+                image.width(), image.height(), 0,
+                gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
+                bytes(ptr)
+            )
+
+        def _draw_image(self) -> None:
+            """Draw image as textured quad."""
+            if not self._state:
+                return
+
+            gl.glBindTexture(gl.GL_TEXTURE_2D, self._texture_id)
+            gl.glColor4f(1.0, 1.0, 1.0, 1.0)
+
+            w = self.width()
+            h = self.height()
+
+            gl.glBegin(gl.GL_QUADS)
+            gl.glTexCoord2f(0, 1); gl.glVertex2f(0, 0)
+            gl.glTexCoord2f(1, 1); gl.glVertex2f(w, 0)
+            gl.glTexCoord2f(1, 0); gl.glVertex2f(w, h)
+            gl.glTexCoord2f(0, 0); gl.glVertex2f(0, h)
+            gl.glEnd()
+
+        def paintEvent(self, event) -> None:
+            """Paint with OpenGL for image, QPainter for annotations."""
+            # First do OpenGL rendering
+            super().paintEvent(event)
+
+            if not self._state:
+                return
+
+            # Then overlay with QPainter for shapes (hybrid approach)
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            # Apply scale for annotations
+            painter.scale(self._state.scale_factor, self._state.scale_factor)
+
+            # Draw shapes
+            for shape in self._state.shapes:
+                self._draw_shape(painter, shape, self._state)
+
+            # Draw current shape being drawn
+            if self._state.current_shape:
+                self._draw_shape(painter, self._state.current_shape, self._state)
+
+            # Draw overlays
+            self._draw_overlays(painter, self._state)
+
+            painter.end()
+
+
+class DrawingArea(QWidget):
     """
     Main canvas widget for drawing and editing annotations.
 
     Supports drawing bounding boxes and polygons, with zoom/pan functionality
     and interactive editing of shapes and points.
+
+    Uses pluggable render backends (CPU or GPU) for image display with
+    dynamic switching capability.
     """
 
     # Signals
@@ -48,7 +471,7 @@ class DrawingArea(QLabel):
     POINT_DETECTION_RADIUS = 10
     EDGE_DETECTION_RADIUS = 5
 
-    def __init__(self, parent: Optional[QLabel] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Initialize the drawing area."""
         super().__init__(parent)
 
@@ -64,6 +487,25 @@ class DrawingArea(QLabel):
 
         # Undo/Redo manager
         self.undo_manager = UndoRedoManager()
+
+        # Render state and backends
+        self._render_state = RenderState()
+        self._cpu_backend = CPURenderBackend(self)
+        self._gpu_backend: Optional[GPURenderBackend] = None
+        self._current_backend = self._cpu_backend
+        self._gpu_enabled = False
+
+        # Layout for render backends
+        self._layout = QStackedLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
+        self._layout.addWidget(self._cpu_backend)
+
+        # Set up backend
+        self._cpu_backend.set_render_state(self._render_state)
+
+        # Image storage (for pixmap() compatibility)
+        self._pixmap: Optional[QPixmap] = None
 
         # Initialize state
         self._init_state()
@@ -124,6 +566,112 @@ class DrawingArea(QLabel):
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
         self.grabGesture(Qt.GestureType.PinchGesture)
 
+    # === Pixmap Methods (for compatibility with QLabel API) ===
+
+    def pixmap(self) -> Optional[QPixmap]:
+        """Return the current pixmap."""
+        return self._pixmap
+
+    def setPixmap(self, pixmap: QPixmap) -> None:
+        """Set the image pixmap."""
+        self._pixmap = pixmap
+        self._render_state.pixmap = pixmap
+        self._sync_render_state()
+        self._update_scaled_pixmap()
+        self.update()
+
+    def clear(self) -> None:
+        """Clear the pixmap and reset state (QLabel API compatibility)."""
+        self._pixmap = None
+        self._render_state.pixmap = None
+        self._render_state.scaled_pixmap = None
+        self.scaled_pixmap = None
+
+        # Clear backend state
+        self._cpu_backend._scaled_pixmap = None
+        self._cpu_backend.clear()  # QLabel.clear()
+
+        if self._gpu_backend:
+            self._gpu_backend._texture_needs_update = True
+
+        self.update()
+
+    # === GPU Acceleration ===
+
+    def set_gpu_acceleration(self, enabled: bool) -> None:
+        """
+        Enable or disable GPU-accelerated rendering.
+
+        Args:
+            enabled: True to use GPU rendering, False for CPU rendering
+        """
+        if enabled == self._gpu_enabled:
+            return
+
+        if enabled and not is_opengl_available():
+            logger.warning("GPU acceleration requested but OpenGL is not available")
+            return
+
+        self._gpu_enabled = enabled
+
+        if enabled:
+            # Create GPU backend if needed
+            if self._gpu_backend is None:
+                try:
+                    self._gpu_backend = GPURenderBackend(self)
+                    self._layout.addWidget(self._gpu_backend.widget)
+                    self._gpu_backend.set_render_state(self._render_state)
+
+                    # Install event filter to forward mouse events
+                    self._gpu_backend.widget.installEventFilter(self)
+                except Exception as e:
+                    logger.error(f"Failed to create GPU backend: {e}")
+                    self._gpu_enabled = False
+                    return
+
+            # Switch to GPU backend
+            self._current_backend = self._gpu_backend
+            self._layout.setCurrentWidget(self._gpu_backend.widget)
+            self._gpu_backend.update_scaled_pixmap()
+            logger.info("Switched to GPU rendering")
+        else:
+            # Switch to CPU backend
+            self._current_backend = self._cpu_backend
+            self._layout.setCurrentWidget(self._cpu_backend)
+            self._cpu_backend.update_scaled_pixmap()
+            logger.info("Switched to CPU rendering")
+
+        self._sync_render_state()
+        self.update()
+
+    def is_gpu_enabled(self) -> bool:
+        """Check if GPU acceleration is currently enabled."""
+        return self._gpu_enabled
+
+    # === Render State Synchronization ===
+
+    def _sync_render_state(self) -> None:
+        """Synchronize local state with render state object."""
+        self._render_state.shapes = self.shapes
+        self._render_state.current_shape = self.current_shape
+        self._render_state.selected_shape = self.selected_shape
+        self._render_state.selected_points = self.selected_points
+        self._render_state.hover_point = self.hover_point
+        self._render_state.hover_edge = self.hover_edge
+        self._render_state.hover_shape = self.hover_shape
+        self._render_state.moving_point = self.moving_point
+        self._render_state._last_mouse_pos = self._last_mouse_pos
+        self._render_state.selection_rect_start = self._selection_rect_start
+        self._render_state.selection_rect_end = self._selection_rect_end
+        self._render_state.drawing_selection_rect = self._drawing_selection_rect
+        self._render_state.scale_factor = self.scale_factor
+        self._render_state.current_tool = self.current_tool
+        self._render_state.drawing = self.drawing
+        self._render_state.line_thickness = self.line_thickness
+        self._render_state.font_size = self.font_size
+        self._render_state.box_color = self.box_color
+        self._render_state.polygon_color = self.polygon_color
+
     def set_scroll_area(self, scroll_area: QScrollArea) -> None:
         """Set the parent scroll area for pan support."""
         self.scroll_area = scroll_area
@@ -152,13 +700,20 @@ class DrawingArea(QLabel):
 
     def _update_scaled_pixmap(self) -> None:
         """Update the scaled pixmap based on current scale factor."""
-        if self.pixmap() and not self.pixmap().isNull():
-            self.scaled_pixmap = self.pixmap().scaled(
-                self.pixmap().size() * self.scale_factor,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            self.setFixedSize(self.scaled_pixmap.size())
+        self._sync_render_state()
+
+        if self._gpu_enabled and self._gpu_backend:
+            self._gpu_backend.update_scaled_pixmap()
+            # Update container size to match backend
+            if self._pixmap and not self._pixmap.isNull():
+                scaled_size = self._pixmap.size() * self.scale_factor
+                self.setFixedSize(scaled_size.toSize())
+        else:
+            self._cpu_backend.update_scaled_pixmap()
+            # Update container size to match backend
+            if self._cpu_backend._scaled_pixmap:
+                self.setFixedSize(self._cpu_backend._scaled_pixmap.size())
+                self.scaled_pixmap = self._cpu_backend._scaled_pixmap
 
     # === Event Handlers ===
 
@@ -488,56 +1043,62 @@ class DrawingArea(QLabel):
         super().keyReleaseEvent(event)
 
     def paintEvent(self, event) -> None:
-        """Paint the canvas with image and shapes."""
+        """Paint event - rendering is delegated to the active backend."""
+        # The backend widgets (CPURenderBackend or GPURenderBackend) handle
+        # all actual rendering. This container widget doesn't draw anything.
         super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if self.scaled_pixmap and not self.scaled_pixmap.isNull():
-            painter.drawPixmap(self.rect(), self.scaled_pixmap)
+    def update(self) -> None:
+        """Update the widget - syncs state and triggers backend repaint."""
+        self._sync_render_state()
+        if self._gpu_enabled and self._gpu_backend:
+            self._gpu_backend.update()
+        else:
+            self._cpu_backend.update()
+        super().update()
 
-        painter.scale(self.scale_factor, self.scale_factor)
+    def eventFilter(self, watched, event) -> bool:
+        """
+        Filter events from child widgets (GPU backend).
 
-        for shape in self.shapes:
-            self._draw_shape(painter, shape)
+        Forwards mouse and keyboard events from the GPU widget to the
+        DrawingArea's event handlers for consistent behavior.
+        """
+        if self._gpu_backend and watched == self._gpu_backend.widget:
+            event_type = event.type()
 
-        if self.current_shape:
-            self._draw_shape(painter, self.current_shape)
+            # Forward mouse events
+            if event_type in (
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseButtonRelease,
+                QEvent.Type.MouseMove,
+                QEvent.Type.MouseButtonDblClick,
+            ):
+                # Create a copy of the event and handle it
+                if event_type == QEvent.Type.MouseButtonPress:
+                    self.mousePressEvent(event)
+                elif event_type == QEvent.Type.MouseButtonRelease:
+                    self.mouseReleaseEvent(event)
+                elif event_type == QEvent.Type.MouseMove:
+                    self.mouseMoveEvent(event)
+                elif event_type == QEvent.Type.MouseButtonDblClick:
+                    self.mouseDoubleClickEvent(event)
+                return True  # Event handled
 
-        # Draw selected points
-        for shape, point_index in self.selected_points:
-            point = shape.points[point_index]
-            painter.setBrush(QColor(255, 255, 0, 200))
-            painter.drawEllipse(point, 6 / self.scale_factor, 6 / self.scale_factor)
+            # Forward wheel events
+            if event_type == QEvent.Type.Wheel:
+                self.wheelEvent(event)
+                return True
 
-        # Draw selection rectangle
-        if self._drawing_selection_rect and self._selection_rect_start and self._selection_rect_end:
-            rect = QRectF(self._selection_rect_start, self._selection_rect_end).normalized()
-            painter.setPen(QPen(QColor(0, 120, 215), 1 / self.scale_factor, Qt.PenStyle.DashLine))
-            painter.setBrush(QColor(0, 120, 215, 30))
-            painter.drawRect(rect)
+            # Forward key events
+            if event_type == QEvent.Type.KeyPress:
+                self.keyPressEvent(event)
+                return True
+            if event_type == QEvent.Type.KeyRelease:
+                self.keyReleaseEvent(event)
+                return True
 
-        # Draw edge hover highlight and preview point (when polygon tool is active and not drawing)
-        if self.hover_edge and self.current_tool == "polygon" and not self.drawing:
-            shape, edge_index = self.hover_edge
-            p1 = shape.points[edge_index]
-            p2 = shape.points[(edge_index + 1) % len(shape.points)]
-
-            # Draw highlighted edge
-            highlight_color = QColor(0, 200, 255)  # Cyan
-            painter.setPen(QPen(highlight_color, (self.line_thickness + 2) / self.scale_factor))
-            painter.drawLine(p1, p2)
-
-            # Draw preview point on the edge
-            if self._last_mouse_pos:
-                preview_point = self._closest_point_on_line(self._last_mouse_pos, p1, p2)
-                # Draw outer ring
-                painter.setPen(QPen(highlight_color, 2 / self.scale_factor))
-                painter.setBrush(QColor(255, 255, 255, 200))
-                painter.drawEllipse(preview_point, 6 / self.scale_factor, 6 / self.scale_factor)
-                # Draw inner dot
-                painter.setBrush(highlight_color)
-                painter.drawEllipse(preview_point, 3 / self.scale_factor, 3 / self.scale_factor)
+        return super().eventFilter(watched, event)
 
     # === Drawing Helper Methods ===
 

@@ -16,6 +16,7 @@ from PyQt6.QtGui import QKeySequence, QFont
 
 from ...core.config import AppConfig, ConfigManager
 from ...core.format_registry import FormatRegistry
+from ..drawing_area import is_opengl_available
 
 logger = logging.getLogger(__name__)
 
@@ -571,6 +572,29 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(browser_group)
 
+        # Rendering group
+        rendering_group = QGroupBox("Rendering")
+        rendering_layout = QVBoxLayout(rendering_group)
+        rendering_layout.setSpacing(2)
+
+        self.gpu_acceleration_checkbox = QCheckBox("Enable GPU acceleration")
+
+        # Disable if OpenGL is not available
+        if not is_opengl_available():
+            self.gpu_acceleration_checkbox.setEnabled(False)
+            self.gpu_acceleration_checkbox.setToolTip("OpenGL not available on this system")
+            description = "OpenGL not available - GPU acceleration is disabled"
+        else:
+            description = "Use GPU for hardware-accelerated image display (may improve performance with large images)"
+
+        rendering_layout.addWidget(self._create_setting_row(
+            "GPU Rendering",
+            self.gpu_acceleration_checkbox,
+            description
+        ))
+
+        layout.addWidget(rendering_group)
+
         layout.addStretch()
         return self._create_scrollable_page(page)
 
@@ -738,6 +762,9 @@ class SettingsDialog(QDialog):
             self.default_format_combo.setCurrentIndex(format_index)
         self.auto_detect_format_checkbox.setChecked(config.auto_detect_format)
 
+        # Rendering settings
+        self.gpu_acceleration_checkbox.setChecked(config.gpu_acceleration)
+
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
         config = AppConfig(
@@ -754,7 +781,8 @@ class SettingsDialog(QDialog):
             finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString(),
             delete_shape_key=self.delete_shape_key_edit.keySequence().toString(),
             default_annotation_format=self.default_format_combo.currentData(),
-            auto_detect_format=self.auto_detect_format_checkbox.isChecked()
+            auto_detect_format=self.auto_detect_format_checkbox.isChecked(),
+            gpu_acceleration=self.gpu_acceleration_checkbox.isChecked(),
         )
 
         self.config_manager.save(config)
@@ -782,5 +810,6 @@ class SettingsDialog(QDialog):
             finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString(),
             delete_shape_key=self.delete_shape_key_edit.keySequence().toString(),
             default_annotation_format=self.default_format_combo.currentData(),
-            auto_detect_format=self.auto_detect_format_checkbox.isChecked()
+            auto_detect_format=self.auto_detect_format_checkbox.isChecked(),
+            gpu_acceleration=self.gpu_acceleration_checkbox.isChecked(),
         )
