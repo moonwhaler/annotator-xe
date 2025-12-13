@@ -111,6 +111,9 @@ class DrawingArea(QLabel):
         self._selection_rect_end: Optional[QPointF] = None
         self._drawing_selection_rect = False
 
+        # Point insertion state
+        self._inserting_point = False
+
         # Widget setup
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -311,6 +314,9 @@ class DrawingArea(QLabel):
             self._handle_drawing_move(transformed_pos)
         elif self.current_tool == "select":
             self._handle_select_move(transformed_pos)
+        elif self.current_tool == "polygon" and self.moving_point:
+            # Handle dragging a newly inserted point
+            self._move_polygon_point(transformed_pos)
 
         self._update_hover(transformed_pos)
         self.update()
@@ -383,6 +389,11 @@ class DrawingArea(QLabel):
         if self._drawing_selection_rect and self._selection_rect_start and self._selection_rect_end:
             self._select_points_in_rect()
 
+        # Handle point insertion completion (polygon tool)
+        if self._inserting_point and self.selected_shape:
+            # Emit shapes_changed to trigger autosave and update UI
+            self.shapes_changed.emit()
+
         self.selecting = False
         self.moving_shape = False
         self.resize_handle = None
@@ -395,6 +406,7 @@ class DrawingArea(QLabel):
         self._multi_point_drag_origin = None
         self._selection_rect_start = None
         self._selection_rect_end = None
+        self._inserting_point = False
         self._drawing_selection_rect = False
         self.update()
         self.shapes_changed.emit()
@@ -923,12 +935,24 @@ class DrawingArea(QLabel):
             self.update()
 
     def _insert_point_to_polygon(self, pos: QPointF) -> None:
-        """Insert a point into a polygon edge."""
+        """Insert a point into a polygon edge and set up for immediate dragging."""
         if self.hover_edge:
-            shape, index = self.hover_edge
-            shape.points.insert(index + 1, pos)
+            shape, edge_index = self.hover_edge
+            new_point_index = edge_index + 1
+
+            # Insert the new point
+            shape.points.insert(new_point_index, pos)
+
+            # Set up full dragging state (like _switch_to_select_and_grab_point)
+            shape.selected = True
             self.selected_shape = shape
-            self.moving_point = pos
+            self.selected_points = [(shape, new_point_index)]
+            self.moving_point = shape.points[new_point_index]
+            self._point_move_start = QPointF(pos)  # Start position for undo
+            self._point_move_index = new_point_index
+            self._inserting_point = True  # Flag to indicate we're inserting, not just moving
+
+            self.shape_selected.emit(shape)
             self.update()
 
     def _select_points_in_rect(self) -> None:
