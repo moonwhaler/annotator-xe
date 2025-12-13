@@ -10,11 +10,12 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QWidget,
     QLineEdit, QPushButton, QSpinBox, QCheckBox, QDialogButtonBox,
     QFileDialog, QComboBox, QKeySequenceEdit, QListWidget, QListWidgetItem,
-    QStackedWidget, QLabel, QFrame, QSizePolicy, QGroupBox
+    QStackedWidget, QLabel, QFrame, QSizePolicy, QGroupBox, QScrollArea
 )
 from PyQt6.QtGui import QKeySequence, QFont
 
 from ...core.config import AppConfig, ConfigManager
+from ...core.format_registry import FormatRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,13 @@ QComboBox QAbstractItemView {
     border: 1px solid #555555;
     selection-background-color: #0e639c;
     color: #cccccc;
+    padding: 4px;
+    outline: none;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 6px 8px;
+    min-height: 24px;
 }
 
 QPushButton {
@@ -234,6 +242,10 @@ QScrollArea {
     background-color: transparent;
 }
 
+QScrollArea > QWidget > QWidget {
+    background-color: transparent;
+}
+
 QScrollBar:vertical {
     background-color: #1e1e1e;
     width: 12px;
@@ -278,8 +290,8 @@ class SettingsDialog(QDialog):
     def _init_ui(self) -> None:
         """Initialize the dialog UI."""
         self.setWindowTitle("Settings")
-        self.setMinimumSize(700, 500)
-        self.resize(750, 550)
+        self.setMinimumSize(800, 600)
+        self.resize(900, 700)
         self.setStyleSheet(SETTINGS_STYLESHEET)
 
         main_layout = QHBoxLayout(self)
@@ -288,7 +300,7 @@ class SettingsDialog(QDialog):
 
         # Sidebar navigation
         self.nav_list = QListWidget()
-        self.nav_list.setFixedWidth(160)
+        self.nav_list.setFixedWidth(180)
         self.nav_list.setSpacing(2)
 
         nav_items = [
@@ -335,11 +347,20 @@ class SettingsDialog(QDialog):
         """Handle navigation item change."""
         self.stack.setCurrentIndex(index)
 
+    def _create_scrollable_page(self, content_widget: QWidget) -> QScrollArea:
+        """Wrap a content widget in a scroll area for proper scrolling."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content_widget)
+        return scroll
+
     def _create_section_header(self, title: str, description: str = "") -> QWidget:
         """Create a section header with title and optional description."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setContentsMargins(0, 0, 0, 12)
         layout.setSpacing(4)
 
         title_label = QLabel(title)
@@ -362,8 +383,8 @@ class SettingsDialog(QDialog):
         """Create a setting row with label, widget, and optional description."""
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 8, 0, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 6, 0, 6)
+        layout.setSpacing(4)
 
         # Top row: label and widget
         row_layout = QHBoxLayout()
@@ -371,9 +392,12 @@ class SettingsDialog(QDialog):
         row_layout.setSpacing(16)
 
         label_widget = QLabel(label)
-        label_widget.setMinimumWidth(140)
+        label_widget.setFixedWidth(160)
+        label_widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         row_layout.addWidget(label_widget)
 
+        # Give widgets proper sizing
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row_layout.addWidget(widget, 1)
         layout.addLayout(row_layout)
 
@@ -382,7 +406,7 @@ class SettingsDialog(QDialog):
             desc_label = QLabel(description)
             desc_label.setProperty("class", "description")
             desc_label.setWordWrap(True)
-            desc_label.setContentsMargins(156, 0, 0, 0)  # Align with widget
+            desc_label.setContentsMargins(176, 0, 0, 0)  # Align with widget (160 + 16 spacing)
             layout.addWidget(desc_label)
 
         return container
@@ -405,12 +429,12 @@ class SettingsDialog(QDialog):
 
         return container
 
-    def _create_general_page(self) -> QWidget:
+    def _create_general_page(self) -> QScrollArea:
         """Create the General settings page."""
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 0, 16, 0)
+        layout.setSpacing(8)
 
         # Header
         layout.addWidget(self._create_section_header(
@@ -421,7 +445,7 @@ class SettingsDialog(QDialog):
         # Paths group
         paths_group = QGroupBox("Paths")
         paths_layout = QVBoxLayout(paths_group)
-        paths_layout.setSpacing(4)
+        paths_layout.setSpacing(2)
 
         self.default_dir_edit = QLineEdit()
         self.default_dir_edit.setPlaceholderText("No directory selected")
@@ -444,26 +468,57 @@ class SettingsDialog(QDialog):
         # File handling group
         files_group = QGroupBox("File Handling")
         files_layout = QVBoxLayout(files_group)
-        files_layout.setSpacing(4)
+        files_layout.setSpacing(2)
 
         self.autosave_checkbox = QCheckBox("Enable autosave")
         files_layout.addWidget(self._create_setting_row(
             "Autosave",
             self.autosave_checkbox,
-            "Automatically save YOLO annotation files when switching images"
+            "Automatically save annotation files when switching images"
         ))
 
         layout.addWidget(files_group)
 
-        layout.addStretch()
-        return page
+        # Annotation format group
+        format_group = QGroupBox("Annotation Format")
+        format_layout = QVBoxLayout(format_group)
+        format_layout.setSpacing(2)
 
-    def _create_appearance_page(self) -> QWidget:
+        self.default_format_combo = QComboBox()
+        self.default_format_combo.setMinimumWidth(200)
+        for format_name in FormatRegistry.get_format_names():
+            display_name = FormatRegistry.get_display_name(format_name)
+            description = FormatRegistry.get_description(format_name)
+            self.default_format_combo.addItem(f"{display_name}", format_name)
+            self.default_format_combo.setItemData(
+                self.default_format_combo.count() - 1,
+                description,
+                Qt.ItemDataRole.ToolTipRole
+            )
+        format_layout.addWidget(self._create_setting_row(
+            "Default Format",
+            self.default_format_combo,
+            "Default annotation format for new directories"
+        ))
+
+        self.auto_detect_format_checkbox = QCheckBox("Enable auto-detection")
+        format_layout.addWidget(self._create_setting_row(
+            "Auto-detect Format",
+            self.auto_detect_format_checkbox,
+            "Automatically detect annotation format when opening a directory"
+        ))
+
+        layout.addWidget(format_group)
+
+        layout.addStretch()
+        return self._create_scrollable_page(page)
+
+    def _create_appearance_page(self) -> QScrollArea:
         """Create the Appearance settings page."""
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 0, 16, 0)
+        layout.setSpacing(8)
 
         # Header
         layout.addWidget(self._create_section_header(
@@ -474,11 +529,12 @@ class SettingsDialog(QDialog):
         # Annotations group
         annotations_group = QGroupBox("Annotations")
         annotations_layout = QVBoxLayout(annotations_group)
-        annotations_layout.setSpacing(4)
+        annotations_layout.setSpacing(2)
 
         self.line_thickness_spinbox = QSpinBox()
         self.line_thickness_spinbox.setRange(1, 10)
         self.line_thickness_spinbox.setSuffix(" px")
+        self.line_thickness_spinbox.setMinimumWidth(100)
         annotations_layout.addWidget(self._create_setting_row(
             "Line Thickness",
             self.line_thickness_spinbox,
@@ -488,6 +544,7 @@ class SettingsDialog(QDialog):
         self.font_size_spinbox = QSpinBox()
         self.font_size_spinbox.setRange(6, 24)
         self.font_size_spinbox.setSuffix(" pt")
+        self.font_size_spinbox.setMinimumWidth(100)
         annotations_layout.addWidget(self._create_setting_row(
             "Label Size",
             self.font_size_spinbox,
@@ -499,12 +556,13 @@ class SettingsDialog(QDialog):
         # Image Browser group
         browser_group = QGroupBox("Image Browser")
         browser_layout = QVBoxLayout(browser_group)
-        browser_layout.setSpacing(4)
+        browser_layout.setSpacing(2)
 
         self.thumbnail_size_spinbox = QSpinBox()
         self.thumbnail_size_spinbox.setRange(48, 160)
         self.thumbnail_size_spinbox.setSuffix(" px")
         self.thumbnail_size_spinbox.setSingleStep(8)
+        self.thumbnail_size_spinbox.setMinimumWidth(100)
         browser_layout.addWidget(self._create_setting_row(
             "Thumbnail Size",
             self.thumbnail_size_spinbox,
@@ -514,14 +572,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(browser_group)
 
         layout.addStretch()
-        return page
+        return self._create_scrollable_page(page)
 
-    def _create_behavior_page(self) -> QWidget:
+    def _create_behavior_page(self) -> QScrollArea:
         """Create the Behavior settings page."""
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 0, 16, 0)
+        layout.setSpacing(8)
 
         # Header
         layout.addWidget(self._create_section_header(
@@ -532,7 +590,7 @@ class SettingsDialog(QDialog):
         # Selection group
         selection_group = QGroupBox("Selection")
         selection_layout = QVBoxLayout(selection_group)
-        selection_layout.setSpacing(4)
+        selection_layout.setSpacing(2)
 
         self.focus_on_select_checkbox = QCheckBox("Enable focus on selection")
         selection_layout.addWidget(self._create_setting_row(
@@ -549,6 +607,7 @@ class SettingsDialog(QDialog):
         ))
 
         self.zoom_level_combo = QComboBox()
+        self.zoom_level_combo.setMinimumWidth(180)
         self.zoom_level_combo.addItem("Fit to viewport", "fit")
         self.zoom_level_combo.addItem("Close (1.5x)", "close")
         self.zoom_level_combo.addItem("Closer (2x)", "closer")
@@ -564,7 +623,7 @@ class SettingsDialog(QDialog):
         # Drawing group
         drawing_group = QGroupBox("Drawing")
         drawing_layout = QVBoxLayout(drawing_group)
-        drawing_layout.setSpacing(4)
+        drawing_layout.setSpacing(2)
 
         self.auto_select_checkbox = QCheckBox("Enable auto-switch")
         drawing_layout.addWidget(self._create_setting_row(
@@ -576,14 +635,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(drawing_group)
 
         layout.addStretch()
-        return page
+        return self._create_scrollable_page(page)
 
-    def _create_shortcuts_page(self) -> QWidget:
+    def _create_shortcuts_page(self) -> QScrollArea:
         """Create the Shortcuts settings page."""
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 0, 16, 0)
+        layout.setSpacing(8)
 
         # Header
         layout.addWidget(self._create_section_header(
@@ -594,10 +653,11 @@ class SettingsDialog(QDialog):
         # Shortcuts group
         shortcuts_group = QGroupBox("Drawing Shortcuts")
         shortcuts_layout = QVBoxLayout(shortcuts_group)
-        shortcuts_layout.setSpacing(4)
+        shortcuts_layout.setSpacing(2)
 
         self.finish_drawing_key_edit = QKeySequenceEdit()
         self.finish_drawing_key_edit.setToolTip("Press a key combination or clear to disable")
+        self.finish_drawing_key_edit.setMinimumWidth(180)
         shortcuts_layout.addWidget(self._create_setting_row(
             "Finish Drawing",
             self.finish_drawing_key_edit,
@@ -606,6 +666,7 @@ class SettingsDialog(QDialog):
 
         self.delete_shape_key_edit = QKeySequenceEdit()
         self.delete_shape_key_edit.setToolTip("Press a key combination or clear to disable")
+        self.delete_shape_key_edit.setMinimumWidth(180)
         shortcuts_layout.addWidget(self._create_setting_row(
             "Delete Shape",
             self.delete_shape_key_edit,
@@ -623,7 +684,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(info_label)
 
         layout.addStretch()
-        return page
+        return self._create_scrollable_page(page)
 
     def _browse_default_dir(self) -> None:
         """Open directory browser for default directory."""
@@ -671,6 +732,12 @@ class SettingsDialog(QDialog):
         else:
             self.delete_shape_key_edit.clear()
 
+        # Format settings
+        format_index = self.default_format_combo.findData(config.default_annotation_format)
+        if format_index >= 0:
+            self.default_format_combo.setCurrentIndex(format_index)
+        self.auto_detect_format_checkbox.setChecked(config.auto_detect_format)
+
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
         config = AppConfig(
@@ -685,7 +752,9 @@ class SettingsDialog(QDialog):
             zoom_on_select_level=self.zoom_level_combo.currentData(),
             auto_select_on_point_click=self.auto_select_checkbox.isChecked(),
             finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString(),
-            delete_shape_key=self.delete_shape_key_edit.keySequence().toString()
+            delete_shape_key=self.delete_shape_key_edit.keySequence().toString(),
+            default_annotation_format=self.default_format_combo.currentData(),
+            auto_detect_format=self.auto_detect_format_checkbox.isChecked()
         )
 
         self.config_manager.save(config)
@@ -711,5 +780,7 @@ class SettingsDialog(QDialog):
             zoom_on_select_level=self.zoom_level_combo.currentData(),
             auto_select_on_point_click=self.auto_select_checkbox.isChecked(),
             finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString(),
-            delete_shape_key=self.delete_shape_key_edit.keySequence().toString()
+            delete_shape_key=self.delete_shape_key_edit.keySequence().toString(),
+            default_annotation_format=self.default_format_combo.currentData(),
+            auto_detect_format=self.auto_detect_format_checkbox.isChecked()
         )

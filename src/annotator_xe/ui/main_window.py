@@ -21,8 +21,10 @@ from PyQt6.QtWidgets import (
     QApplication, QSizePolicy
 )
 
+from ..core.annotation_format import AnnotationFormat
 from ..core.config import ConfigManager, AppConfig, YOLODataConfigManager
 from ..core.detector import YOLODetector
+from ..core.format_registry import FormatRegistry
 from ..core.models import Shape, ShapeType
 from ..core.yolo_format import YOLOAnnotationReader, YOLOAnnotationWriter
 from ..workers.image_loader import ImageLoader, get_image_files
@@ -67,6 +69,12 @@ class MainWindow(QMainWindow):
         self.yolo_writer = YOLOAnnotationWriter()
         self.yolo_data_manager: Optional[YOLODataConfigManager] = None
 
+        # Annotation format handling
+        self.annotation_handler: Optional[AnnotationFormat] = None
+        self.current_format: str = "yolo"
+        self.annotations_cache: Dict[str, List[Shape]] = {}  # For dataset formats
+        self.image_sizes_cache: Dict[str, tuple] = {}  # For dataset formats
+
         # State
         self.current_directory = ""
         self.current_image = ""
@@ -93,6 +101,7 @@ class MainWindow(QMainWindow):
         self.file_label: Optional[QLabel] = None
         self.image_count_label: Optional[QLabel] = None
         self.tagged_count_label: Optional[QLabel] = None
+        self.format_label: Optional[QLabel] = None
 
         # Load settings and initialize UI
         self._load_settings()
@@ -185,6 +194,10 @@ class MainWindow(QMainWindow):
 
         self.file_label = QLabel()
         self.status_bar.addPermanentWidget(self.file_label)
+
+        self.format_label = QLabel()
+        self.format_label.setStyleSheet("QLabel { color: #888; }")
+        self.status_bar.addPermanentWidget(self.format_label)
 
         self.image_count_label = QLabel()
         self.status_bar.addPermanentWidget(self.image_count_label)
@@ -578,20 +591,72 @@ class MainWindow(QMainWindow):
         if new_directory:
             self._reset_ui()
             self.current_directory = new_directory
+            self._detect_and_set_format(Path(new_directory))
             self._load_images(self.current_directory)
-            self._load_yaml_classes()
+            self._load_classes_for_format()
             self.dir_label.setText(f"Directory: {self.current_directory}")
+
+    def _detect_and_set_format(self, directory: Path) -> None:
+        """Detect annotation format and initialize handler."""
+        if self.config.auto_detect_format:
+            self.current_format = FormatRegistry.detect_format(directory)
+        else:
+            self.current_format = self.config.default_annotation_format
+
+        # Initialize the format handler
+        self.annotation_handler = FormatRegistry.get_handler(self.current_format)
+
+        # Update format label in status bar
+        display_name = FormatRegistry.get_display_name(self.current_format)
+        self.format_label.setText(f"Format: {display_name}")
+
+        # For dataset formats, load all annotations
+        if not self.annotation_handler.is_per_image:
+            self.annotations_cache = self.annotation_handler.load_directory(directory)
+            # Update classes from the loaded annotations
+            loaded_classes = self.annotation_handler.get_classes_from_directory(directory)
+            if loaded_classes:
+                self.classes = loaded_classes
+                self.annotation_handler.set_classes(self.classes)
+        else:
+            self.annotations_cache.clear()
+
+        logger.info(f"Using {display_name} format for {directory}")
+
+    def _load_classes_for_format(self) -> None:
+        """Load class definitions based on current format."""
+        if not self.current_directory:
+            return
+
+        directory = Path(self.current_directory)
+
+        if self.current_format == "yolo":
+            # Use existing YOLO data.yaml loading
+            self._load_yaml_classes()
+        else:
+            # Load classes from the format handler
+            if self.annotation_handler:
+                self.classes = self.annotation_handler.get_classes_from_directory(directory)
+                self.annotation_handler.set_classes(self.classes)
+
+        # Also update legacy YOLO reader/writer for backward compatibility
+        self.yolo_reader.set_classes(self.classes)
+        self.yolo_writer.set_classes(self.classes)
+        self._update_classification_list()
 
     def _reset_ui(self) -> None:
         """Reset UI state for new directory."""
         self.current_image = ""
         self.classes = {}
+        self.annotations_cache.clear()
+        self.image_sizes_cache.clear()
         self.image_label.clear()
         self.image_label.shapes = []
         self.image_label.current_shape = None
         self.image_list.clear()
         self.class_model.clear()
         self.file_label.setText("")
+        self.format_label.setText("")
         self.miniature_view.clear()
         self._reset_zoom()
         self.hide_tagged_checkbox.setChecked(False)
@@ -613,6 +678,14 @@ class MainWindow(QMainWindow):
         file_path = os.path.join(self.current_directory, filename)
         size = self.config.thumbnail_size
         item = ImageListItem(icon, file_path, size)
+
+        # Check annotation status using the format handler
+        if self.annotation_handler:
+            if self.annotation_handler.is_per_image:
+                item.has_annotation = self.annotation_handler.has_annotation(Path(file_path))
+            else:
+                # For dataset formats, check the cache
+                item.has_annotation = filename in self.annotations_cache and bool(self.annotations_cache[filename])
 
         if item.has_annotation:
             item.setIcon(add_annotation_marker(icon, size))
@@ -693,52 +766,104 @@ class MainWindow(QMainWindow):
         self.yolo_writer.set_classes(self.classes)
         self._update_classification_list()
 
-    def _load_yolo_annotations(self) -> None:
-        """Load annotations for current image."""
+    def _load_annotations(self) -> None:
+        """Load annotations for current image using the active format handler."""
         if not self.current_image or not self.image_label.pixmap():
             return
 
         image_path = Path(self.current_directory) / self.current_image
-        txt_path = image_path.with_suffix(".txt")
+        img_width = self.image_label.pixmap().width()
+        img_height = self.image_label.pixmap().height()
 
-        # Ensure reader has current class mapping before reading
-        self.yolo_reader.set_classes(self.classes)
+        # Store image size for dataset formats
+        self.image_sizes_cache[self.current_image] = (img_width, img_height)
 
-        shapes = self.yolo_reader.read(
-            txt_path,
-            self.image_label.pixmap().width(),
-            self.image_label.pixmap().height()
-        )
+        if self.annotation_handler:
+            # Ensure handler has current class mapping
+            self.annotation_handler.set_classes(self.classes)
+
+            if self.annotation_handler.is_per_image:
+                # Per-image format: read directly from file
+                shapes = self.annotation_handler.read_image(image_path, img_width, img_height)
+            else:
+                # Dataset format: get from cache
+                shapes = self.annotations_cache.get(self.current_image, []).copy()
+        else:
+            # Fallback to legacy YOLO reader
+            txt_path = image_path.with_suffix(".txt")
+            self.yolo_reader.set_classes(self.classes)
+            shapes = self.yolo_reader.read(txt_path, img_width, img_height)
 
         self.image_label.shapes = shapes
         self.image_label.update()
         self._update_shape_list()
 
-    def _save_yolo(self) -> None:
-        """Save annotations in YOLO format."""
+    def _load_yolo_annotations(self) -> None:
+        """Legacy method - redirects to _load_annotations."""
+        self._load_annotations()
+
+    def _save_annotations(self) -> None:
+        """Save annotations using the active format handler."""
         if not self.current_image:
             return
 
         image_path = Path(self.current_directory) / self.current_image
-        txt_path = image_path.with_suffix(".txt")
-        had_annotation = txt_path.exists()
+        img_width = self.image_label.pixmap().width()
+        img_height = self.image_label.pixmap().height()
 
-        if not self.image_label.shapes:
-            if had_annotation:
-                txt_path.unlink()
-            self._update_image_list_item(self.current_image, False)
-            return
+        # Store image size
+        self.image_sizes_cache[self.current_image] = (img_width, img_height)
 
-        self.yolo_writer.set_classes(self.classes)
-        self.yolo_writer.write(
-            txt_path,
-            self.image_label.shapes,
-            self.image_label.pixmap().width(),
-            self.image_label.pixmap().height()
-        )
+        has_shapes = bool(self.image_label.shapes)
 
-        self._save_yaml_classes()
-        self._update_image_list_item(self.current_image, True)
+        if self.annotation_handler:
+            self.annotation_handler.set_classes(self.classes)
+
+            if self.annotation_handler.is_per_image:
+                # Per-image format: write directly to file
+                self.annotation_handler.write_image(
+                    image_path,
+                    self.image_label.shapes,
+                    img_width,
+                    img_height
+                )
+            else:
+                # Dataset format: update cache and save
+                self.annotations_cache[self.current_image] = self.image_label.shapes.copy()
+                self.annotation_handler.save_directory(
+                    Path(self.current_directory),
+                    self.annotations_cache,
+                    self.image_sizes_cache
+                )
+        else:
+            # Fallback to legacy YOLO writer
+            txt_path = image_path.with_suffix(".txt")
+
+            if not self.image_label.shapes:
+                if txt_path.exists():
+                    txt_path.unlink()
+            else:
+                self.yolo_writer.set_classes(self.classes)
+                self.yolo_writer.write(
+                    txt_path,
+                    self.image_label.shapes,
+                    img_width,
+                    img_height
+                )
+
+        # Save class definitions (format-specific)
+        self._save_classes_for_format()
+        self._update_image_list_item(self.current_image, has_shapes)
+
+    def _save_yolo(self) -> None:
+        """Legacy method - redirects to _save_annotations."""
+        self._save_annotations()
+
+    def _save_classes_for_format(self) -> None:
+        """Save class definitions based on current format."""
+        if self.current_format == "yolo":
+            self._save_yaml_classes()
+        # Other formats store classes within the annotation file itself
 
     def _save_yaml_classes(self) -> None:
         """Save class definitions to data.yaml."""

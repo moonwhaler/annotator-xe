@@ -1,5 +1,7 @@
+autoDetectFormat: true
 autoSelectOnPointClick: true
 autosave: false
+defaultAnnotationFormat: yolo
 defaultDirectory: ''
 deleteShapeKey: Ctrl+Backspace
 finishDrawingKey: Esc

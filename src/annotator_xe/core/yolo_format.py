@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QPointF
 
+from .annotation_format import AnnotationFormat
 from .models import Shape, ShapeType
 
 logger = logging.getLogger(__name__)
@@ -322,3 +323,135 @@ def has_annotation(image_path: Path) -> bool:
         return False  # No valid annotations found
     except Exception:
         return False
+
+
+class YOLOAnnotationFormat(AnnotationFormat):
+    """
+    YOLO annotation format handler implementing the AnnotationFormat interface.
+
+    YOLO format stores annotations in .txt files with one file per image.
+    Each line contains: class_id x_center y_center width height (for boxes)
+    or class_id x1 y1 x2 y2 ... xn yn (for polygons).
+    All coordinates are normalized to [0, 1].
+    """
+
+    def __init__(self, classes: Optional[Dict[str, int]] = None) -> None:
+        """Initialize the YOLO format handler."""
+        super().__init__(classes)
+        self._reader = YOLOAnnotationReader(classes)
+        self._writer = YOLOAnnotationWriter(classes)
+
+    def set_classes(self, classes: Dict[str, int]) -> None:
+        """Update the class mapping."""
+        super().set_classes(classes)
+        self._reader.set_classes(classes)
+        self._writer.set_classes(classes)
+
+    @property
+    def format_name(self) -> str:
+        """Return the format name."""
+        return "yolo"
+
+    @property
+    def is_per_image(self) -> bool:
+        """YOLO uses one .txt file per image."""
+        return True
+
+    @property
+    def file_extension(self) -> str:
+        """YOLO uses .txt files."""
+        return ".txt"
+
+    @property
+    def supports_polygons(self) -> bool:
+        """YOLO supports both bounding boxes and polygons."""
+        return True
+
+    def read_image(
+        self,
+        image_path: Path,
+        img_width: int,
+        img_height: int
+    ) -> List[Shape]:
+        """Read annotations for a single image."""
+        txt_path = get_annotation_path(image_path)
+        return self._reader.read(txt_path, img_width, img_height)
+
+    def write_image(
+        self,
+        image_path: Path,
+        shapes: List[Shape],
+        img_width: int,
+        img_height: int
+    ) -> bool:
+        """Write annotations for a single image."""
+        txt_path = get_annotation_path(image_path)
+        return self._writer.write(txt_path, shapes, img_width, img_height)
+
+    def load_directory(
+        self,
+        directory: Path
+    ) -> Dict[str, List[Shape]]:
+        """
+        Load all YOLO annotations from a directory.
+
+        Note: This method doesn't load shapes directly because it needs
+        image dimensions. Use read_image() for individual images.
+
+        Returns:
+            Empty dict - use read_image() with dimensions for actual loading
+        """
+        # For per-image formats, we don't pre-load everything
+        # The main window will call read_image() for each image as needed
+        return {}
+
+    def save_directory(
+        self,
+        directory: Path,
+        annotations: Dict[str, List[Shape]],
+        image_sizes: Dict[str, Tuple[int, int]]
+    ) -> bool:
+        """Save all annotations to individual YOLO files."""
+        success = True
+        for filename, shapes in annotations.items():
+            image_path = directory / filename
+            if filename in image_sizes:
+                width, height = image_sizes[filename]
+                if not self.write_image(image_path, shapes, width, height):
+                    success = False
+        return success
+
+    def get_annotation_path(self, image_path: Path) -> Path:
+        """Get the .txt annotation file path for an image."""
+        return get_annotation_path(image_path)
+
+    def has_annotation(self, image_path: Path) -> bool:
+        """Check if an image has YOLO annotations."""
+        return has_annotation(image_path)
+
+    def get_classes_from_directory(self, directory: Path) -> Dict[str, int]:
+        """
+        Load classes from data.yaml in the directory.
+
+        Returns:
+            Dictionary mapping class names to IDs
+        """
+        data_yaml = directory / "data.yaml"
+        if not data_yaml.exists():
+            return self.classes.copy()
+
+        try:
+            import yaml
+            with open(data_yaml, "r") as f:
+                data = yaml.safe_load(f) or {}
+
+            names = data.get("names", [])
+            if isinstance(names, list):
+                return {name: i for i, name in enumerate(names)}
+            elif isinstance(names, dict):
+                # Some YOLO data.yaml use dict format {0: 'cat', 1: 'dog'}
+                return {v: int(k) for k, v in names.items()}
+        except Exception as e:
+            logger.error(f"Error loading classes from data.yaml: {e}")
+
+        return self.classes.copy()
