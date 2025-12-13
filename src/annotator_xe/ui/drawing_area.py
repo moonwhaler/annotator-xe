@@ -419,12 +419,18 @@ class DrawingArea(QLabel):
         elif self.finish_drawing_key and self._matches_key_sequence(event, self.finish_drawing_key):
             self.finish_drawing()
         elif self.delete_shape_key and self._matches_key_sequence(event, self.delete_shape_key):
-            self._delete_selected_shape()
+            self._delete_selected()
         super().keyPressEvent(event)
 
-    def _delete_selected_shape(self) -> None:
-        """Delete the currently selected shape."""
-        if self.selected_shape and self.selected_shape in self.shapes:
+    def _delete_selected(self) -> None:
+        """Delete selected points or shape.
+
+        If points are selected, delete those points.
+        If no points selected but a shape is selected, delete the shape.
+        """
+        if self.selected_points:
+            self.delete_selected_points()
+        elif self.selected_shape and self.selected_shape in self.shapes:
             index = self.shapes.index(self.selected_shape)
             self.delete_shape(index)
             self.update()
@@ -1004,22 +1010,84 @@ class DrawingArea(QLabel):
         self.shapes_changed.emit()
 
     def delete_selected_points(self) -> None:
-        """Delete all selected points from polygons."""
+        """Delete all selected points from polygons.
+
+        Ensures polygons remain closed after deletion if they were closed before.
+        Won't delete points if it would leave fewer than 3 points.
+        """
         if not self.selected_points:
             return
 
-        # Group points by shape for undo
-        shape_points = {}
+        # Group points by shape and track closure state
+        # Use id(shape) as key since Shape is not hashable
+        shape_info = {}  # id(shape) -> {'shape': shape, 'points': [...], 'was_closed': bool}
         for shape, point_index in self.selected_points:
-            if shape.type == ShapeType.POLYGON and len(shape.points) > 3:
-                if shape not in shape_points:
-                    shape_points[shape] = []
-                shape_points[shape].append((point_index, QPointF(shape.points[point_index])))
+            if shape.type != ShapeType.POLYGON:
+                continue
 
-        # Create undo commands for each shape
-        for shape, points_data in shape_points.items():
-            cmd = DeletePointsCommand(shape, points_data, self._on_undo_redo_change)
+            shape_id = id(shape)
+            if shape_id not in shape_info:
+                # Check if polygon is closed (first == last point)
+                is_closed = (
+                    len(shape.points) > 2 and
+                    shape.points[0] == shape.points[-1]
+                )
+                shape_info[shape_id] = {
+                    'shape': shape,
+                    'points': [],
+                    'was_closed': is_closed,
+                    'effective_count': len(shape.points) - 1 if is_closed else len(shape.points)
+                }
+
+            shape_info[shape_id]['points'].append((point_index, QPointF(shape.points[point_index])))
+
+        # Process each shape
+        for shape_id, info in shape_info.items():
+            shape = info['shape']
+            points_to_delete = info['points']
+            was_closed = info['was_closed']
+            effective_count = info['effective_count']
+
+            # For closed polygons, handle first/last point specially
+            if was_closed:
+                # Get indices being deleted
+                indices = {idx for idx, _ in points_to_delete}
+                last_idx = len(shape.points) - 1
+
+                # If deleting first point (index 0), also mark last point for deletion
+                # If deleting last point, also mark first point
+                # But avoid double-counting
+                if 0 in indices and last_idx not in indices:
+                    points_to_delete.append((last_idx, QPointF(shape.points[last_idx])))
+                elif last_idx in indices and 0 not in indices:
+                    points_to_delete.append((0, QPointF(shape.points[0])))
+
+                # Recalculate unique points being deleted (excluding the closing duplicate)
+                unique_indices = set()
+                for idx, _ in points_to_delete:
+                    if idx == last_idx:
+                        unique_indices.add(0)  # Treat last as first for closed polygons
+                    else:
+                        unique_indices.add(idx)
+
+                # Check if we'd have at least 3 points remaining
+                remaining = effective_count - len(unique_indices)
+                if remaining < 3:
+                    continue  # Skip this shape - can't delete
+            else:
+                # Open polygon - just check we have enough points
+                if len(shape.points) - len(points_to_delete) < 3:
+                    continue
+
+            # Create undo command and execute
+            cmd = DeletePointsCommand(shape, points_to_delete, self._on_undo_redo_change)
             self.undo_manager.execute(cmd)
+
+            # Re-close the polygon if it was closed
+            if was_closed and len(shape.points) >= 3:
+                # Ensure first and last points are the same
+                if shape.points[0] != shape.points[-1]:
+                    shape.points.append(QPointF(shape.points[0]))
 
         # Clear selection state
         self.selected_points = []
