@@ -977,6 +977,7 @@ class MainWindow(QMainWindow):
     def _set_drawing_tool(self, tool: str) -> None:
         """Set the current drawing tool."""
         self.image_label.current_tool = tool
+        self.image_label.clear_interaction_state()
         if tool != "polygon":
             self.image_label.finish_drawing()
         self._show_status_message(f"Current tool: {tool.capitalize()}")

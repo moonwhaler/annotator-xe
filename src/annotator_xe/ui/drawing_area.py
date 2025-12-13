@@ -121,6 +121,15 @@ class DrawingArea(QLabel):
         """Set the parent scroll area for pan support."""
         self.scroll_area = scroll_area
 
+    def clear_interaction_state(self) -> None:
+        """Clear interaction state when switching tools."""
+        self.hover_point = None
+        self.hover_edge = None
+        self.hover_shape = None
+        self._selection_rect_start = None
+        self._selection_rect_end = None
+        self._drawing_selection_rect = False
+
     def set_scale_factor(self, factor: float) -> None:
         """
         Set the zoom scale factor.
