@@ -342,6 +342,7 @@ class MainWindow(QMainWindow):
         self.shape_list = QListWidget()
         self.shape_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.shape_list.itemSelectionChanged.connect(self._select_shape_from_list)
+        self.shape_list.itemClicked.connect(self._on_shape_list_item_clicked)
         layout.addWidget(self.shape_list)
 
         delete_button = QPushButton("Delete selected shape")
@@ -862,7 +863,7 @@ class MainWindow(QMainWindow):
             self.shape_list.addItem(item)
 
     def _select_shape_from_list(self) -> None:
-        """Select a shape when clicked in the list."""
+        """Select a shape when selection changes in the list."""
         selected = self.shape_list.selectedItems()
         if selected:
             index = selected[0].data(Qt.ItemDataRole.UserRole)
@@ -872,10 +873,20 @@ class MainWindow(QMainWindow):
                 self.image_label.update()
                 self.setFocus()
 
-                if self.config.zoom_on_select:
-                    self._zoom_to_shape(shape)
-                elif self.config.focus_on_select:
-                    self._focus_on_shape(shape)
+    def _on_shape_list_item_clicked(self, item) -> None:
+        """Handle click on shape list item - triggers focus/zoom on every click."""
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if 0 <= index < len(self.image_label.shapes):
+            shape = self.image_label.shapes[index]
+            # Ensure the shape is selected
+            self.image_label.selected_shape = shape
+            self.image_label.update()
+
+            # Apply focus/zoom on every click
+            if self.config.zoom_on_select:
+                self._zoom_to_shape(shape)
+            elif self.config.focus_on_select:
+                self._focus_on_shape(shape)
 
     def _on_shape_selected_in_viewport(self, shape: object) -> None:
         """Update list selection when a shape is selected in the viewport.
