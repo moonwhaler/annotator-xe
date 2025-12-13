@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal, QPoint, QEvent
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QFont, QPainterPath, QPolygonF,
-    QPixmap, QFontMetrics, QMouseEvent, QKeyEvent, QWheelEvent
+    QPixmap, QFontMetrics, QMouseEvent, QKeyEvent, QWheelEvent,
+    QNativeGestureEvent
 )
-from PyQt6.QtWidgets import QLabel, QMenu, QInputDialog, QScrollArea
+from PyQt6.QtWidgets import QLabel, QMenu, QInputDialog, QScrollArea, QGestureEvent
+from PyQt6.QtWidgets import QApplication
 
 from ..core.models import Shape, ShapeType
 from ..core.undo_redo import (
@@ -102,6 +104,10 @@ class DrawingArea(QLabel):
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+        # Enable native gesture events (for touchpad pinch-to-zoom)
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.grabGesture(Qt.GestureType.PinchGesture)
+
     def set_scroll_area(self, scroll_area: QScrollArea) -> None:
         """Set the parent scroll area for pan support."""
         self.scroll_area = scroll_area
@@ -130,6 +136,91 @@ class DrawingArea(QLabel):
             self.setFixedSize(self.scaled_pixmap.size())
 
     # === Event Handlers ===
+
+    def event(self, event: QEvent) -> bool:
+        """Handle events including gestures."""
+        if event.type() == QEvent.Type.NativeGesture:
+            return self._handle_native_gesture(event)
+        elif event.type() == QEvent.Type.Gesture:
+            return self._handle_gesture(event)
+        return super().event(event)
+
+    def _handle_native_gesture(self, event: QNativeGestureEvent) -> bool:
+        """Handle native gesture events (macOS trackpad pinch-to-zoom)."""
+        from PyQt6.QtCore import Qt as QtCore
+
+        gesture_type = event.gestureType()
+
+        if gesture_type == Qt.NativeGestureType.ZoomNativeGesture:
+            # Pinch-to-zoom gesture
+            zoom_delta = event.value()
+
+            # Get cursor position for zoom center
+            cursor_pos = event.position()
+
+            # Calculate new scale factor
+            # zoom_delta is typically small (e.g., 0.01 per tick)
+            new_scale = self.scale_factor * (1.0 + zoom_delta)
+            new_scale = max(min(new_scale, self.MAX_ZOOM), self.MIN_ZOOM)
+
+            if new_scale != self.scale_factor:
+                # Calculate relative position for zoom centering
+                relative_pos = QPointF(
+                    cursor_pos.x() / self.width() if self.width() > 0 else 0.5,
+                    cursor_pos.y() / self.height() if self.height() > 0 else 0.5
+                )
+
+                old_scale = self.scale_factor
+                self.set_scale_factor(new_scale)
+
+                # Adjust scroll position to keep cursor point stable
+                if self.scroll_area:
+                    scale_ratio = new_scale / old_scale
+                    viewport_size = self.scroll_area.viewport().size()
+
+                    new_scroll_x = int(cursor_pos.x() * scale_ratio - viewport_size.width() * relative_pos.x())
+                    new_scroll_y = int(cursor_pos.y() * scale_ratio - viewport_size.height() * relative_pos.y())
+
+                    self.scroll_area.horizontalScrollBar().setValue(new_scroll_x)
+                    self.scroll_area.verticalScrollBar().setValue(new_scroll_y)
+
+            event.accept()
+            return True
+
+        return False
+
+    def _handle_gesture(self, event: QGestureEvent) -> bool:
+        """Handle gesture events (pinch-to-zoom via QGesture)."""
+        from PyQt6.QtWidgets import QPinchGesture
+
+        pinch = event.gesture(Qt.GestureType.PinchGesture)
+        if pinch and isinstance(pinch, QPinchGesture):
+            change_flags = pinch.changeFlags()
+
+            if change_flags & QPinchGesture.ChangeFlag.ScaleFactorChanged:
+                scale_factor = pinch.scaleFactor()
+                center = pinch.centerPoint()
+
+                # Apply zoom
+                new_scale = self.scale_factor * scale_factor
+                new_scale = max(min(new_scale, self.MAX_ZOOM), self.MIN_ZOOM)
+
+                if new_scale != self.scale_factor:
+                    self.set_scale_factor(new_scale)
+
+                    # Adjust scroll to center on pinch point
+                    if self.scroll_area:
+                        local_center = self.mapFromGlobal(center.toPoint())
+                        self.scroll_area.ensureVisible(
+                            int(local_center.x()),
+                            int(local_center.y()),
+                            50, 50
+                        )
+
+            event.accept()
+            return True
+
+        return False
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """Handle mouse wheel for zooming."""
@@ -351,13 +442,21 @@ class DrawingArea(QLabel):
         point: QPointF,
         color: QColor
     ) -> None:
-        """Draw a label with background at the given position."""
-        font = QFont("Arial", self.font_size)
+        """Draw a label with background at the given position.
+
+        The label size is adjusted inversely to the zoom level so it
+        maintains a consistent visual size on screen.
+        """
+        # Adjust font size inversely to scale factor for consistent visual size
+        adjusted_font_size = self.font_size / self.scale_factor
+        font = QFont("Arial", int(adjusted_font_size))
+        font.setPointSizeF(adjusted_font_size)  # Use float for smoother scaling
         font_metrics = QFontMetrics(font)
         text_width = font_metrics.horizontalAdvance(label)
         text_height = font_metrics.height()
 
-        padding = 4
+        # Adjust padding inversely to scale factor
+        padding = 4 / self.scale_factor
         rect_width = text_width + 2 * padding
         rect_height = text_height + 2 * padding
 

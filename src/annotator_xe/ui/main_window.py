@@ -939,6 +939,7 @@ class MainWindow(QMainWindow):
         image_size = self.image_label.pixmap().size()
         viewport_size = self.image_scroll_area.viewport().size()
 
+        # Calculate visible area in original image coordinates
         visible_rect = QRectF(
             self.image_scroll_area.horizontalScrollBar().value() / self.image_label.scale_factor,
             self.image_scroll_area.verticalScrollBar().value() / self.image_label.scale_factor,
@@ -946,34 +947,45 @@ class MainWindow(QMainWindow):
             viewport_size.height() / self.image_label.scale_factor
         )
 
+        # Clamp to image bounds
         visible_rect = visible_rect.intersected(
             QRectF(0, 0, image_size.width(), image_size.height())
         )
 
-        miniature_scale_x = self.miniature_view.width() / image_size.width()
-        miniature_scale_y = self.miniature_view.height() / image_size.height()
+        # Use the minimap's actual scale factors (based on scaled image size, not widget size)
+        scale_x, scale_y = self.miniature_view.get_scale_factors()
 
+        # Convert to minimap coordinates
         miniature_rect = QRectF(
-            visible_rect.x() * miniature_scale_x,
-            visible_rect.y() * miniature_scale_y,
-            visible_rect.width() * miniature_scale_x,
-            visible_rect.height() * miniature_scale_y
+            visible_rect.x() * scale_x,
+            visible_rect.y() * scale_y,
+            visible_rect.width() * scale_x,
+            visible_rect.height() * scale_y
         )
 
         self.miniature_view.set_view_rect(miniature_rect)
 
     def _update_main_view(self, rect: QRectF) -> None:
         """Update main view scroll position from minimap."""
-        if self.image_label.pixmap():
-            image_size = self.image_label.pixmap().size()
-            x_ratio = rect.x() / self.miniature_view.width()
-            y_ratio = rect.y() / self.miniature_view.height()
+        if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
+            return
 
-            x = x_ratio * image_size.width() * self.image_label.scale_factor
-            y = y_ratio * image_size.height() * self.image_label.scale_factor
+        # Get the scale factors from minimap
+        scale_x, scale_y = self.miniature_view.get_scale_factors()
 
-            self.image_scroll_area.horizontalScrollBar().setValue(int(x))
-            self.image_scroll_area.verticalScrollBar().setValue(int(y))
+        if scale_x <= 0 or scale_y <= 0:
+            return
+
+        # Convert minimap coordinates back to original image coordinates
+        image_x = rect.x() / scale_x
+        image_y = rect.y() / scale_y
+
+        # Apply the drawing area's zoom scale to get scroll position
+        scroll_x = image_x * self.image_label.scale_factor
+        scroll_y = image_y * self.image_label.scale_factor
+
+        self.image_scroll_area.horizontalScrollBar().setValue(int(scroll_x))
+        self.image_scroll_area.verticalScrollBar().setValue(int(scroll_y))
 
     # === Auto Detection ===
 
