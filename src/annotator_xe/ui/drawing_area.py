@@ -99,6 +99,13 @@ class DrawingArea(QLabel):
         self._move_start_points: Optional[List[QPointF]] = None
         self._point_move_start: Optional[QPointF] = None
         self._point_move_index: Optional[int] = None
+        self._multi_point_move_starts: Optional[List[Tuple[Shape, int, QPointF]]] = None
+        self._multi_point_drag_origin: Optional[QPointF] = None
+
+        # Selection rectangle state
+        self._selection_rect_start: Optional[QPointF] = None
+        self._selection_rect_end: Optional[QPointF] = None
+        self._drawing_selection_rect = False
 
         # Widget setup
         self.setMouseTracking(True)
@@ -339,6 +346,29 @@ class DrawingArea(QLabel):
                 self.undo_manager._redo_stack.clear()
                 self.undo_manager.state_changed.emit()
 
+        # Handle multi-point move undo
+        if self._multi_point_move_starts:
+            commands_added = False
+            for shape, idx, start_pos in self._multi_point_move_starts:
+                new_pos = shape.points[idx]
+                if start_pos != new_pos:
+                    cmd = MovePointCommand(
+                        shape,
+                        idx,
+                        start_pos,
+                        QPointF(new_pos),
+                        self._on_undo_redo_change
+                    )
+                    self.undo_manager._undo_stack.append(cmd)
+                    commands_added = True
+            if commands_added:
+                self.undo_manager._redo_stack.clear()
+                self.undo_manager.state_changed.emit()
+
+        # Handle selection rectangle completion
+        if self._drawing_selection_rect and self._selection_rect_start and self._selection_rect_end:
+            self._select_points_in_rect()
+
         self.selecting = False
         self.moving_shape = False
         self.resize_handle = None
@@ -347,6 +377,11 @@ class DrawingArea(QLabel):
         self._move_start_points = None
         self._point_move_start = None
         self._point_move_index = None
+        self._multi_point_move_starts = None
+        self._multi_point_drag_origin = None
+        self._selection_rect_start = None
+        self._selection_rect_end = None
+        self._drawing_selection_rect = False
         self.update()
         self.shapes_changed.emit()
 
@@ -402,6 +437,13 @@ class DrawingArea(QLabel):
             point = shape.points[point_index]
             painter.setBrush(QColor(255, 255, 0, 200))
             painter.drawEllipse(point, 6 / self.scale_factor, 6 / self.scale_factor)
+
+        # Draw selection rectangle
+        if self._drawing_selection_rect and self._selection_rect_start and self._selection_rect_end:
+            rect = QRectF(self._selection_rect_start, self._selection_rect_end).normalized()
+            painter.setPen(QPen(QColor(0, 120, 215), 1 / self.scale_factor, Qt.PenStyle.DashLine))
+            painter.setBrush(QColor(0, 120, 215, 30))
+            painter.drawRect(rect)
 
     # === Drawing Helper Methods ===
 
@@ -589,6 +631,22 @@ class DrawingArea(QLabel):
         self._move_start_points = None
         self._point_move_start = None
         self._point_move_index = None
+        self._multi_point_move_starts = None
+        self._multi_point_drag_origin = None
+
+        # Check if clicking on an already-selected point to start multi-point drag
+        if len(self.selected_points) > 1:
+            for shape, i in self.selected_points:
+                point = shape.points[i]
+                if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
+                    # Start multi-point drag
+                    self._multi_point_move_starts = [
+                        (s, idx, QPointF(s.points[idx])) for s, idx in self.selected_points
+                    ]
+                    self._multi_point_drag_origin = pos
+                    self.moving_point = point  # Use this to indicate dragging is active
+                    self.update()
+                    return
 
         if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             self.selected_points = []
@@ -635,6 +693,10 @@ class DrawingArea(QLabel):
                 self._move_start_points = [QPointF(p) for p in shape.points]
                 return
 
+        # No shape or point clicked - start selection rectangle
+        self._selection_rect_start = pos
+        self._selection_rect_end = pos
+        self._drawing_selection_rect = True
         self.selected_shape = None
         self.update()
 
@@ -657,7 +719,10 @@ class DrawingArea(QLabel):
 
     def _handle_select_move(self, pos: QPointF) -> None:
         """Handle mouse move in select mode."""
-        if self.resize_handle:
+        if self._drawing_selection_rect:
+            self._selection_rect_end = pos
+            self.update()
+        elif self.resize_handle:
             self._resize_box(pos)
         elif self.moving_point:
             self._move_polygon_point(pos)
@@ -738,7 +803,17 @@ class DrawingArea(QLabel):
         self.update()
 
     def _move_polygon_point(self, pos: QPointF) -> None:
-        """Move a polygon point."""
+        """Move polygon point(s) - supports both single and multi-point movement."""
+        # Multi-point movement
+        if self._multi_point_move_starts and self._multi_point_drag_origin:
+            delta = pos - self._multi_point_drag_origin
+            for shape, idx, start_pos in self._multi_point_move_starts:
+                new_pos = start_pos + delta
+                shape.points[idx] = new_pos
+            self.update()
+            return
+
+        # Single point movement
         if self.moving_point and self.selected_shape:
             index = self.selected_shape.points.index(self.moving_point)
             self.selected_shape.move_point(index, pos)
@@ -767,6 +842,23 @@ class DrawingArea(QLabel):
             self.selected_shape = shape
             self.moving_point = pos
             self.update()
+
+    def _select_points_in_rect(self) -> None:
+        """Select all shape points inside the selection rectangle."""
+        if not self._selection_rect_start or not self._selection_rect_end:
+            return
+
+        rect = QRectF(self._selection_rect_start, self._selection_rect_end).normalized()
+
+        # Only select if rectangle has meaningful size
+        if rect.width() < 5 / self.scale_factor and rect.height() < 5 / self.scale_factor:
+            return
+
+        for shape in self.shapes:
+            for i, point in enumerate(shape.points):
+                if rect.contains(point):
+                    if (shape, i) not in self.selected_points:
+                        self.selected_points.append((shape, i))
 
     def _shape_contains_point(self, shape: Shape, point: QPointF) -> bool:
         """Check if a point is inside a shape."""
