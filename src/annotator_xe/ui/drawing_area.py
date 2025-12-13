@@ -226,6 +226,8 @@ class CPURenderBackend(QLabel, RenderBackendMixin):
         super().__init__(parent)
         self._state: Optional[RenderState] = None
         self._scaled_pixmap: Optional[QPixmap] = None
+        # Enable mouse tracking for hover detection without button press
+        self.setMouseTracking(True)
 
     def set_render_state(self, state: RenderState) -> None:
         """Set the render state for drawing."""
@@ -337,6 +339,8 @@ if _OPENGL_AVAILABLE:
             self._backend: Optional[GPURenderBackend] = None
             self._texture_id: int = 0
             self._gl_initialized = False
+            # Enable mouse tracking for hover detection without button press
+            self.setMouseTracking(True)
 
         def initializeGL(self) -> None:
             """Initialize OpenGL context."""
@@ -503,6 +507,9 @@ class DrawingArea(QWidget):
 
         # Set up backend
         self._cpu_backend.set_render_state(self._render_state)
+
+        # Install event filter to forward mouse events from CPU backend
+        self._cpu_backend.installEventFilter(self)
 
         # Image storage (for pixmap() compatibility)
         self._pixmap: Optional[QPixmap] = None
@@ -1059,12 +1066,18 @@ class DrawingArea(QWidget):
 
     def eventFilter(self, watched, event) -> bool:
         """
-        Filter events from child widgets (GPU backend).
+        Filter events from child widgets (CPU and GPU backends).
 
-        Forwards mouse and keyboard events from the GPU widget to the
+        Forwards mouse and keyboard events from backend widgets to the
         DrawingArea's event handlers for consistent behavior.
         """
-        if self._gpu_backend and watched == self._gpu_backend.widget:
+        # Check if event is from one of our backend widgets
+        is_backend_widget = (
+            watched == self._cpu_backend or
+            (self._gpu_backend and watched == self._gpu_backend.widget)
+        )
+
+        if is_backend_widget:
             event_type = event.type()
 
             # Forward mouse events

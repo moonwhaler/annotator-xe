@@ -214,8 +214,8 @@ class MainWindow(QMainWindow):
         self.image_count_label = QLabel()
         self.status_bar.addPermanentWidget(self.image_count_label)
 
+        # Keep reference but don't add to UI - counts are combined in image_count_label
         self.tagged_count_label = QLabel()
-        self.status_bar.addPermanentWidget(self.tagged_count_label)
 
     def _create_dock_widgets(self) -> None:
         """Create all dock widgets."""
@@ -624,7 +624,7 @@ class MainWindow(QMainWindow):
             self._detect_and_set_format(Path(new_directory))
             self._load_images(self.current_directory)
             self._load_classes_for_format()
-            self.dir_label.setText(f"Directory: {self.current_directory}")
+            self.dir_label.setText(f"{self.current_directory}")
 
     def _detect_and_set_format(self, directory: Path) -> bool:
         """
@@ -662,7 +662,7 @@ class MainWindow(QMainWindow):
 
         # Update format label in status bar
         display_name = FormatRegistry.get_display_name(self.current_format)
-        self.format_label.setText(f"Format: {display_name}")
+        self.format_label.setText(f"[{display_name}]")
 
         # Update Save action text to show current format
         self._update_save_action_text()
@@ -746,6 +746,7 @@ class MainWindow(QMainWindow):
             cache=self.thumbnail_cache
         )
         self.thumbnail_loader.thumbnail_loaded.connect(self._update_thumbnail)
+        self.thumbnail_loader.queue_empty.connect(self._on_thumbnails_loaded)
         self.thumbnail_loader.start()
 
         # Connect visibility tracking
@@ -808,8 +809,7 @@ class MainWindow(QMainWindow):
             and self.image_list.item(i).has_annotation
         )
 
-        self.image_count_label.setText(f"Total Images: {total}")
-        self.tagged_count_label.setText(f"Tagged Images: {tagged}")
+        self.image_count_label.setText(f"{tagged}/{total} tagged")
         self.image_browser.update_stats()
 
         # Trigger initial thumbnail loading for visible items
@@ -873,8 +873,7 @@ class MainWindow(QMainWindow):
             and self.image_list.item(i).has_annotation
         )
 
-        self.image_count_label.setText(f"Total Images: {total}")
-        self.tagged_count_label.setText(f"Tagged Images: {tagged}")
+        self.image_count_label.setText(f"{tagged}/{total} tagged")
 
         # Update the image browser stats
         self.image_browser.update_stats()
@@ -904,7 +903,7 @@ class MainWindow(QMainWindow):
             self.image_label.clear_undo_history()  # Clear undo history for new image
 
             self._load_yolo_annotations()
-            self.file_label.setText(f"File: {self.current_image}")
+            self.file_label.setText(f"{self.current_image}")
             self._update_classification_list()
             self._update_shape_list()
             self._update_minimap()
@@ -1422,7 +1421,7 @@ class MainWindow(QMainWindow):
             if isinstance(self.image_list.item(i), ImageListItem)
             and self.image_list.item(i).has_annotation
         )
-        self.tagged_count_label.setText(f"Tagged Images: {tagged}")
+        self.image_count_label.setText(f"{tagged}/{total} tagged")
         self.image_browser.update_stats()
 
     # === Classification Operations ===
@@ -2094,6 +2093,11 @@ class MainWindow(QMainWindow):
     def _show_status_message(self, message: str) -> None:
         """Show a status bar message."""
         self.status_bar.showMessage(message)
+
+    def _on_thumbnails_loaded(self) -> None:
+        """Update status message when thumbnail loading completes."""
+        total = self.image_list.count()
+        self.status_bar.showMessage(f"Found {total} images")
 
     def _show_about(self) -> None:
         """Show about dialog."""
