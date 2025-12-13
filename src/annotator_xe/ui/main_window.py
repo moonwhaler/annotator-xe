@@ -224,8 +224,6 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        layout.addWidget(QLabel("Images:"))
-
         # Sorting controls
         sort_layout = QHBoxLayout()
 
@@ -493,6 +491,9 @@ class MainWindow(QMainWindow):
         self.image_scroll_area.verticalScrollBar().valueChanged.connect(
             self._update_minimap_view_rect
         )
+
+        # Install event filter to catch viewport resize events
+        self.image_scroll_area.viewport().installEventFilter(self)
 
     @staticmethod
     def _create_icon(text: str) -> QIcon:
@@ -933,52 +934,64 @@ class MainWindow(QMainWindow):
     def _update_minimap_view_rect(self) -> None:
         """Update the minimap viewport rectangle."""
         if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
-            self.miniature_view.set_view_rect(QRectF())
+            self.miniature_view.set_view_rect_normalized(QRectF(0, 0, 1, 1))
             return
 
         image_size = self.image_label.pixmap().size()
+        img_width = image_size.width()
+        img_height = image_size.height()
+
+        if img_width <= 0 or img_height <= 0:
+            return
+
         viewport_size = self.image_scroll_area.viewport().size()
+        scale = self.image_label.scale_factor
 
         # Calculate visible area in original image coordinates
-        visible_rect = QRectF(
-            self.image_scroll_area.horizontalScrollBar().value() / self.image_label.scale_factor,
-            self.image_scroll_area.verticalScrollBar().value() / self.image_label.scale_factor,
-            viewport_size.width() / self.image_label.scale_factor,
-            viewport_size.height() / self.image_label.scale_factor
-        )
+        scroll_x = self.image_scroll_area.horizontalScrollBar().value()
+        scroll_y = self.image_scroll_area.verticalScrollBar().value()
+
+        # Visible area in original image pixels
+        visible_x = scroll_x / scale
+        visible_y = scroll_y / scale
+        visible_width = viewport_size.width() / scale
+        visible_height = viewport_size.height() / scale
 
         # Clamp to image bounds
-        visible_rect = visible_rect.intersected(
-            QRectF(0, 0, image_size.width(), image_size.height())
+        visible_x = max(0, min(visible_x, img_width))
+        visible_y = max(0, min(visible_y, img_height))
+        visible_width = min(visible_width, img_width - visible_x)
+        visible_height = min(visible_height, img_height - visible_y)
+
+        # Also cap to image size (when zoomed out, viewport might be larger than image)
+        visible_width = min(visible_width, img_width)
+        visible_height = min(visible_height, img_height)
+
+        # Convert to normalized coordinates (0-1)
+        norm_rect = QRectF(
+            visible_x / img_width,
+            visible_y / img_height,
+            visible_width / img_width,
+            visible_height / img_height
         )
 
-        # Use the minimap's actual scale factors (based on scaled image size, not widget size)
-        scale_x, scale_y = self.miniature_view.get_scale_factors()
-
-        # Convert to minimap coordinates
-        miniature_rect = QRectF(
-            visible_rect.x() * scale_x,
-            visible_rect.y() * scale_y,
-            visible_rect.width() * scale_x,
-            visible_rect.height() * scale_y
-        )
-
-        self.miniature_view.set_view_rect(miniature_rect)
+        self.miniature_view.set_view_rect_normalized(norm_rect)
 
     def _update_main_view(self, rect: QRectF) -> None:
-        """Update main view scroll position from minimap."""
+        """Update main view scroll position from minimap (rect is in normalized 0-1 coords)."""
         if not self.image_label.pixmap() or self.image_label.pixmap().isNull():
             return
 
-        # Get the scale factors from minimap
-        scale_x, scale_y = self.miniature_view.get_scale_factors()
+        image_size = self.image_label.pixmap().size()
+        img_width = image_size.width()
+        img_height = image_size.height()
 
-        if scale_x <= 0 or scale_y <= 0:
+        if img_width <= 0 or img_height <= 0:
             return
 
-        # Convert minimap coordinates back to original image coordinates
-        image_x = rect.x() / scale_x
-        image_y = rect.y() / scale_y
+        # Convert normalized coordinates to original image coordinates
+        image_x = rect.x() * img_width
+        image_y = rect.y() * img_height
 
         # Apply the drawing area's zoom scale to get scroll position
         scroll_x = image_x * self.image_label.scale_factor
@@ -1196,6 +1209,16 @@ class MainWindow(QMainWindow):
         """Handle window resize."""
         super().resizeEvent(event)
         self._update_minimap_view_rect()
+
+    def eventFilter(self, obj, event) -> bool:
+        """Filter events for the scroll area viewport to catch resize."""
+        from PyQt6.QtCore import QEvent
+
+        if obj == self.image_scroll_area.viewport() and event.type() == QEvent.Type.Resize:
+            # Viewport was resized, update minimap
+            self._update_minimap_view_rect()
+
+        return super().eventFilter(obj, event)
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
