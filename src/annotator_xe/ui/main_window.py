@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from pathlib import Path
@@ -166,6 +167,9 @@ class MainWindow(QMainWindow):
         # Menu bar
         self._create_menus()
 
+        # Restore last session window state (position, size, dock layout)
+        self._restore_last_session()
+
         # Load images if directory was set
         if self.current_directory:
             self._load_images(self.current_directory)
@@ -192,6 +196,7 @@ class MainWindow(QMainWindow):
         """Create all dock widgets."""
         # Image Browser Dock
         self.dock_widgets["Image Browser"] = QDockWidget("Image Browser", self)
+        self.dock_widgets["Image Browser"].setObjectName("ImageBrowserDock")
         self.dock_widgets["Image Browser"].setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -200,6 +205,7 @@ class MainWindow(QMainWindow):
 
         # Miniature View Dock
         self.dock_widgets["Miniature View"] = QDockWidget("Miniature View", self)
+        self.dock_widgets["Miniature View"].setObjectName("MiniatureViewDock")
         self.dock_widgets["Miniature View"].setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -208,6 +214,7 @@ class MainWindow(QMainWindow):
 
         # Classifications Dock
         self.dock_widgets["Classifications"] = QDockWidget("Classifications", self)
+        self.dock_widgets["Classifications"].setObjectName("ClassificationsDock")
         self.dock_widgets["Classifications"].setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -216,6 +223,7 @@ class MainWindow(QMainWindow):
 
         # Shapes Dock
         self.dock_widgets["Shapes"] = QDockWidget("Shapes", self)
+        self.dock_widgets["Shapes"].setObjectName("ShapesDock")
         self.dock_widgets["Shapes"].setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -345,6 +353,7 @@ class MainWindow(QMainWindow):
     def _create_toolbar(self) -> None:
         """Create the main toolbar."""
         self.toolbar = QToolBar()
+        self.toolbar.setObjectName("MainToolBar")
         self.toolbar.setIconSize(QSize(32, 32))
         self.addToolBar(self.toolbar)
 
@@ -1276,23 +1285,56 @@ class MainWindow(QMainWindow):
             self._update_workspaces_menu()
 
     def _get_current_layout(self) -> Dict[str, Any]:
-        """Get the current dock layout."""
+        """Get the current dock layout including full window state."""
         layout = {}
         for name, dock in self.dock_widgets.items():
             area = self.dockWidgetArea(dock)
+            # Convert geometry tuple to list for YAML serialization
+            geom = dock.geometry().getRect() if dock.isFloating() else None
             layout[name] = {
                 "area": area,
                 "floating": dock.isFloating(),
-                "geometry": dock.geometry().getRect() if dock.isFloating() else None,
+                "geometry": list(geom) if geom else None,
                 "visible": dock.isVisible(),
                 "size": {"width": dock.width(), "height": dock.height()}
             }
 
+        # Save main window state including position, size, and window state
         layout["main_window"] = {
-            "size": {"width": self.width(), "height": self.height()}
+            "geometry": {
+                "x": self.x(),
+                "y": self.y(),
+                "width": self.width(),
+                "height": self.height()
+            },
+            "state": self._get_window_state_string(),
+            "qt_state": base64.b64encode(self.saveState().data()).decode('utf-8')
         }
 
         return layout
+
+    def _get_window_state_string(self) -> str:
+        """Get the current window state as a string."""
+        if self.isMaximized():
+            return "maximized"
+        elif self.isMinimized():
+            return "minimized"
+        return "normal"
+
+    def _save_session_state(self) -> None:
+        """Save the current window state for automatic restoration on next launch."""
+        layout = self._get_current_layout()
+        self.workspace_manager.add_workspace("_last_session", layout)
+        logger.info("Session state saved")
+
+    def _restore_last_session(self) -> None:
+        """Restore the last session state if available."""
+        layout = self.workspace_manager.get_workspace("_last_session")
+        if layout:
+            logger.info("Restoring last session state")
+            self._apply_layout(layout, show_window=False)
+        else:
+            logger.info("No previous session state found")
 
     def _load_workspace(self, name: str) -> None:
         """Load a workspace layout."""
@@ -1301,10 +1343,52 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", f"Workspace '{name}' not found.")
             return
 
-        if "main_window" in layout and "size" in layout["main_window"]:
-            size = layout["main_window"]["size"]
+        self._apply_layout(layout)
+
+    def _apply_layout(self, layout: Dict[str, Any], show_window: bool = True) -> None:
+        """Apply a workspace layout to the window.
+
+        Args:
+            layout: Layout dictionary with dock and main window settings
+            show_window: Whether to show/activate the window after applying (set to False during init)
+        """
+        main_window_settings = layout.get("main_window", {})
+
+        # Handle main window geometry (supports both old and new format)
+        if "geometry" in main_window_settings:
+            geom = main_window_settings["geometry"]
+            self.setGeometry(geom["x"], geom["y"], geom["width"], geom["height"])
+        elif "size" in main_window_settings:
+            # Backwards compatibility with old format
+            size = main_window_settings["size"]
             self.resize(size["width"], size["height"])
 
+        # Restore Qt state (handles dock tabification and complex layouts)
+        qt_state = main_window_settings.get("qt_state")
+        if qt_state:
+            try:
+                state_bytes = base64.b64decode(qt_state.encode('utf-8'))
+                self.restoreState(state_bytes)
+            except Exception as e:
+                logger.warning(f"Failed to restore Qt state: {e}")
+                # Fall back to manual dock restoration
+                self._apply_dock_layout_manually(layout)
+        else:
+            # No Qt state saved, use manual restoration
+            self._apply_dock_layout_manually(layout)
+
+        # Apply window state (maximized/normal) after geometry is set
+        window_state = main_window_settings.get("state", "normal")
+        if show_window:
+            if window_state == "maximized":
+                self.showMaximized()
+            elif window_state == "minimized":
+                self.showMinimized()
+            else:
+                self.showNormal()
+
+    def _apply_dock_layout_manually(self, layout: Dict[str, Any]) -> None:
+        """Apply dock layout manually (fallback when Qt state is not available)."""
         for dock_name, settings in layout.items():
             if dock_name == "main_window":
                 continue
@@ -1376,7 +1460,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
-        self.workspace_manager.save()
+        # Save current window state for next launch
+        self._save_session_state()
 
         if self.image_loader:
             self.image_loader.stop()

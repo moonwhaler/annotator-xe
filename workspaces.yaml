@@ -32,6 +32,55 @@ Default:
       width: 300
     visible: true
   main_window:
-    size:
+    geometry:
       height: 800
       width: 1200
+      x: 100
+      y: 100
+    qt_state: null
+    state: normal
+_last_session:
+  Classifications:
+    area: 1
+    floating: false
+    geometry: null
+    size:
+      height: 205
+      width: 339
+    visible: true
+  Image Browser:
+    area: 1
+    floating: false
+    geometry: null
+    size:
+      height: 310
+      width: 339
+    visible: true
+  Miniature View:
+    area: 2
+    floating: true
+    geometry:
+    - 1139
+    - 75
+    - 280
+    - 519
+    size:
+      height: 519
+      width: 280
+    visible: true
+  Shapes:
+    area: 1
+    floating: false
+    geometry: null
+    size:
+      height: 185
+      width: 339
+    visible: true
+  main_window:
+    geometry:
+      height: 773
+      width: 964
+      x: 166
+      y: 31
+    qt_state: AAAA/wAAAAD9AAAAAgAAAAAAAAFTAAACvvwCAAAAA/sAAAAgAEkAbQBhAGcAZQBCAHIAbwB3AHMAZQByAEQAbwBjAGsBAAAALAAAATYAAAC8AP////sAAAAmAEMAbABhAHMAcwBpAGYAaQBjAGEAdABpAG8AbgBzAEQAbwBjAGsBAAABYwAAAM0AAADLAP////sAAAAUAFMAaABhAHAAZQBzAEQAbwBjAGsBAAACMQAAALkAAACdAP///wAAAAEAAAEYAAAC2fwCAAAAAfsAAAAiAE0AaQBuAGkAYQB0AHUAcgBlAFYAaQBlAHcARABvAGMAawMAAARzAAAASwAAARgAAAIHAAACcAAAAr4AAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYATQBhAGkAbgBUAG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA=
+    state: normal

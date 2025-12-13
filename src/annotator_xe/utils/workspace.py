@@ -115,8 +115,8 @@ class WorkspaceManager:
 
     @property
     def workspace_names(self) -> list[str]:
-        """Get list of workspace names."""
-        return list(self._workspaces.keys())
+        """Get list of user-visible workspace names (excludes internal workspaces)."""
+        return [name for name in self._workspaces.keys() if not name.startswith("_")]
 
     def get_workspace(self, name: str) -> Optional[Dict[str, Any]]:
         """
@@ -151,7 +151,8 @@ class WorkspaceManager:
         Returns:
             True if workspace was removed
         """
-        if name in self._workspaces and name != "Default":
+        # Don't allow deletion of Default or internal workspaces (prefixed with _)
+        if name in self._workspaces and name != "Default" and not name.startswith("_"):
             del self._workspaces[name]
             self.save()
             return True
@@ -203,7 +204,9 @@ class WorkspaceManager:
                 "size": {"width": default_right_width, "height": default_height}
             },
             "main_window": {
-                "size": {"width": 1200, "height": 800}
+                "geometry": {"x": 100, "y": 100, "width": 1200, "height": 800},
+                "state": "normal",  # normal, maximized, minimized
+                "qt_state": None,  # Base64-encoded QMainWindow state for dock layout
             }
         }
 
