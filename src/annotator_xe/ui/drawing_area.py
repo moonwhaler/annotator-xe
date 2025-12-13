@@ -60,6 +60,7 @@ class DrawingArea(QLabel):
         self.font_size = 10
         self.auto_select_on_point_click = True
         self.finish_drawing_key = "Escape"  # Key/combination to finish drawing
+        self.delete_shape_key = "Delete"  # Key/combination to delete selected shape
 
         # Undo/Redo manager
         self.undo_manager = UndoRedoManager()
@@ -417,7 +418,17 @@ class DrawingArea(QLabel):
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
         elif self.finish_drawing_key and self._matches_key_sequence(event, self.finish_drawing_key):
             self.finish_drawing()
+        elif self.delete_shape_key and self._matches_key_sequence(event, self.delete_shape_key):
+            self._delete_selected_shape()
         super().keyPressEvent(event)
+
+    def _delete_selected_shape(self) -> None:
+        """Delete the currently selected shape."""
+        if self.selected_shape and self.selected_shape in self.shapes:
+            index = self.shapes.index(self.selected_shape)
+            self.delete_shape(index)
+            self.update()
+            self.shapes_changed.emit()
 
     def _matches_key_sequence(self, event: QKeyEvent, key_sequence_str: str) -> bool:
         """Check if a key event matches a configured key sequence string."""

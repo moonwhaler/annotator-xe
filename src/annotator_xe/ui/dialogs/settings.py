@@ -125,6 +125,10 @@ class SettingsDialog(QDialog):
         self.finish_drawing_key_edit.setToolTip("Key or combination to finish polygon drawing (clear to disable)")
         layout.addRow("Finish drawing key:", self.finish_drawing_key_edit)
 
+        self.delete_shape_key_edit = QKeySequenceEdit()
+        self.delete_shape_key_edit.setToolTip("Key or combination to delete selected shape (clear to disable)")
+        layout.addRow("Delete shape key:", self.delete_shape_key_edit)
+
         widget.setLayout(layout)
         return widget
 
@@ -167,6 +171,10 @@ class SettingsDialog(QDialog):
             self.finish_drawing_key_edit.setKeySequence(QKeySequence(config.finish_drawing_key))
         else:
             self.finish_drawing_key_edit.clear()
+        if config.delete_shape_key:
+            self.delete_shape_key_edit.setKeySequence(QKeySequence(config.delete_shape_key))
+        else:
+            self.delete_shape_key_edit.clear()
 
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
@@ -180,7 +188,8 @@ class SettingsDialog(QDialog):
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
             zoom_on_select_level=self.zoom_level_combo.currentData(),
             auto_select_on_point_click=self.auto_select_checkbox.isChecked(),
-            finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString()
+            finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString(),
+            delete_shape_key=self.delete_shape_key_edit.keySequence().toString()
         )
 
         self.config_manager.save(config)
@@ -204,5 +213,6 @@ class SettingsDialog(QDialog):
             zoom_on_select=self.zoom_on_select_checkbox.isChecked(),
             zoom_on_select_level=self.zoom_level_combo.currentData(),
             auto_select_on_point_click=self.auto_select_checkbox.isChecked(),
-            finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString()
+            finish_drawing_key=self.finish_drawing_key_edit.keySequence().toString(),
+            delete_shape_key=self.delete_shape_key_edit.keySequence().toString()
         )

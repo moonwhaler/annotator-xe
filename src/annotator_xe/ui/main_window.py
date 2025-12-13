@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         self.image_label.font_size = self.config.font_size
         self.image_label.auto_select_on_point_click = self.config.auto_select_on_point_click
         self.image_label.finish_drawing_key = self.config.finish_drawing_key
+        self.image_label.delete_shape_key = self.config.delete_shape_key
 
         self.image_scroll_area.setWidget(self.image_label)
         self.image_scroll_area.setWidgetResizable(True)
@@ -1240,6 +1241,7 @@ class MainWindow(QMainWindow):
         self.image_label.font_size = config.font_size
         self.image_label.auto_select_on_point_click = config.auto_select_on_point_click
         self.image_label.finish_drawing_key = config.finish_drawing_key
+        self.image_label.delete_shape_key = config.delete_shape_key
         self.image_label.update()
 
     # === Workspace Operations ===

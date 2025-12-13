@@ -1,6 +1,7 @@
 autoSelectOnPointClick: true
 autosave: false
 defaultDirectory: ''
+deleteShapeKey: Ctrl+Backspace
 finishDrawingKey: Esc
 focusOnSelect: true
 fontSize: 12

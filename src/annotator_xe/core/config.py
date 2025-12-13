@@ -33,6 +33,7 @@ class AppConfig:
     zoom_on_select_level: str = "fit"  # fit, close, closer, detail
     auto_select_on_point_click: bool = True
     finish_drawing_key: str = "Escape"  # Key/combination to finish polygon drawing (empty to disable)
+    delete_shape_key: str = "Delete"  # Key/combination to delete selected shape (empty to disable)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -47,6 +48,7 @@ class AppConfig:
             "zoomOnSelectLevel": self.zoom_on_select_level,
             "autoSelectOnPointClick": self.auto_select_on_point_click,
             "finishDrawingKey": self.finish_drawing_key,
+            "deleteShapeKey": self.delete_shape_key,
         }
 
     @classmethod
@@ -63,6 +65,7 @@ class AppConfig:
             zoom_on_select_level=data.get("zoomOnSelectLevel", "fit"),
             auto_select_on_point_click=data.get("autoSelectOnPointClick", True),
             finish_drawing_key=data.get("finishDrawingKey", "Escape"),
+            delete_shape_key=data.get("deleteShapeKey", "Delete"),
         )
 
 

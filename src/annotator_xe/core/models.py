@@ -109,12 +109,18 @@ class Shape:
         if not (0 <= index < len(self.points)):
             return False
 
+        # Check if polygon is closed (first and last points are at the same position)
+        is_closed = (
+            self.type == ShapeType.POLYGON and
+            len(self.points) > 2 and
+            self.points[0] == self.points[-1]
+        )
+
         self.points[index] = new_pos
 
-        # Keep polygon closed
-        if self.type == ShapeType.POLYGON:
-            if index == 0 or index == len(self.points) - 1:
-                self.points[0] = self.points[-1] = new_pos
+        # Keep polygon closed if it was already closed
+        if is_closed and (index == 0 or index == len(self.points) - 1):
+            self.points[0] = self.points[-1] = new_pos
 
         return True
 
