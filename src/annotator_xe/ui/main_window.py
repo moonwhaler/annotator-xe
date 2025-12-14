@@ -44,6 +44,10 @@ from .theme import get_theme_manager, ThemeMode
 
 logger = logging.getLogger(__name__)
 
+# Internal thumbnail size - always use max slider size for quality
+# Thumbnails are loaded at this size and Qt scales them down for display
+INTERNAL_THUMBNAIL_SIZE = 160
+
 
 def increase_image_allocation_limit() -> None:
     """Remove image allocation limit for large images."""
@@ -854,8 +858,6 @@ class MainWindow(QMainWindow):
         self.image_list.clear()
         self._show_status_message("Scanning images...")
 
-        thumbnail_size = self.config.thumbnail_size
-
         # Phase 1: Start quick scan
         self.image_scanner = ImageScanner(dir_path)
         self.image_scanner.image_found.connect(self._add_image_placeholder)
@@ -863,9 +865,10 @@ class MainWindow(QMainWindow):
         self.image_scanner.start()
 
         # Phase 2: Start thumbnail loader (will load on demand)
+        # Use max size so thumbnails scale well at any slider position
         self.thumbnail_loader = ThumbnailLoader(
             dir_path,
-            thumbnail_size,
+            INTERNAL_THUMBNAIL_SIZE,
             cache=self.thumbnail_cache
         )
         self.thumbnail_loader.thumbnail_loaded.connect(self._update_thumbnail)
@@ -901,9 +904,10 @@ class MainWindow(QMainWindow):
     def _add_image_placeholder(self, filename: str) -> None:
         """Add a placeholder for an image during the scan phase."""
         file_path = os.path.join(self.current_directory, filename)
-        size = self.config.thumbnail_size
-        placeholder = create_placeholder_icon(size)
-        item = ImageListItem(placeholder, file_path, size, thumbnail_loaded=False)
+        display_size = self.config.thumbnail_size
+        # Use max size for icon so it scales well at any slider position
+        placeholder = create_placeholder_icon(INTERNAL_THUMBNAIL_SIZE)
+        item = ImageListItem(placeholder, file_path, display_size, thumbnail_loaded=False)
 
         # Check annotation status using the format handler
         if self.annotation_handler:
@@ -954,9 +958,8 @@ class MainWindow(QMainWindow):
         """Update an item with its loaded thumbnail."""
         item = self.image_list.find_item_by_name(filename)
         if item:
-            size = self.config.thumbnail_size
             if item.has_annotation:
-                item.setIcon(add_annotation_marker(icon, size))
+                item.setIcon(add_annotation_marker(icon, INTERNAL_THUMBNAIL_SIZE))
             else:
                 item.setIcon(icon)
             item.thumbnail_loaded = True
@@ -964,8 +967,8 @@ class MainWindow(QMainWindow):
     def _add_image_to_list(self, filename: str, icon: QIcon) -> None:
         """Add a loaded image to the list (legacy method for fallback)."""
         file_path = os.path.join(self.current_directory, filename)
-        size = self.config.thumbnail_size
-        item = ImageListItem(icon, file_path, size, thumbnail_loaded=True)
+        display_size = self.config.thumbnail_size
+        item = ImageListItem(icon, file_path, display_size, thumbnail_loaded=True)
 
         # Check annotation status using the format handler
         if self.annotation_handler:
@@ -976,7 +979,7 @@ class MainWindow(QMainWindow):
                 item.has_annotation = filename in self.annotations_cache and bool(self.annotations_cache[filename])
 
         if item.has_annotation:
-            item.setIcon(add_annotation_marker(icon, size))
+            item.setIcon(add_annotation_marker(icon, INTERNAL_THUMBNAIL_SIZE))
 
         if self.hide_tagged_checkbox.isChecked() and item.has_annotation:
             item.setHidden(True)
@@ -1518,17 +1521,17 @@ class MainWindow(QMainWindow):
         if item and item.has_annotation != has_annotation:
             item.has_annotation = has_annotation
 
-            size = self.config.thumbnail_size
+            # Use internal thumbnail size for consistency
             original_icon = QIcon(
                 QPixmap(item.file_path).scaled(
-                    size, size,
+                    INTERNAL_THUMBNAIL_SIZE, INTERNAL_THUMBNAIL_SIZE,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation
                 )
             )
 
             if has_annotation:
-                item.setIcon(add_annotation_marker(original_icon, size))
+                item.setIcon(add_annotation_marker(original_icon, INTERNAL_THUMBNAIL_SIZE))
             else:
                 item.setIcon(original_icon)
 
