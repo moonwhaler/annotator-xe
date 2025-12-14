@@ -40,6 +40,7 @@ from .image_browser import (
     ImageListItem, SortableImageList, ImageBrowserWidget,
     add_annotation_marker, create_placeholder_icon
 )
+from .theme import get_theme_manager, ThemeMode
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,10 @@ class MainWindow(QMainWindow):
         """Load application settings."""
         config = self.config
 
+        # Initialize theme from config
+        theme_mode = ThemeMode(config.theme)
+        get_theme_manager().set_mode(theme_mode)
+
         self.current_directory = config.default_directory
         if self.current_directory and Path(self.current_directory).is_dir():
             # Will load images after UI is initialized
@@ -157,6 +162,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Annotator XE")
         self.setGeometry(100, 100, 1200, 800)
 
+        # Apply theme
+        self._apply_theme()
+        get_theme_manager().register_callback(self._on_theme_changed)
+
         # Central widget with drawing area
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -172,6 +181,15 @@ class MainWindow(QMainWindow):
 
         self.image_scroll_area.setWidget(self.image_label)
         self.image_scroll_area.setWidgetResizable(True)
+
+        # Apply themed background to scroll area
+        colors = get_theme_manager().colors
+        self.image_scroll_area.setStyleSheet(
+            f"QScrollArea {{ background-color: {colors.background_secondary}; border: none; }}"
+        )
+        self.image_scroll_area.viewport().setStyleSheet(
+            f"background-color: {colors.background_secondary};"
+        )
 
         layout = QVBoxLayout(central_widget)
         layout.addWidget(self.image_scroll_area)
@@ -208,7 +226,8 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.file_label)
 
         self.format_label = QLabel()
-        self.format_label.setStyleSheet("QLabel { color: #888; }")
+        colors = get_theme_manager().colors
+        self.format_label.setStyleSheet(f"QLabel {{ color: {colors.text_muted}; }}")
         self.status_bar.addPermanentWidget(self.format_label)
 
         self.image_count_label = QLabel()
@@ -498,6 +517,10 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self._open_directory)
         file_menu.addAction(open_action)
 
+        # Recent Paths submenu
+        self.recent_paths_menu = file_menu.addMenu("Recent Paths")
+        self._update_recent_paths_menu()
+
         file_menu.addSeparator()
 
         self.menu_save_action = QAction("Save", self)
@@ -640,12 +663,91 @@ class MainWindow(QMainWindow):
         """Open a directory for annotation."""
         new_directory = QFileDialog.getExistingDirectory(self, "Select Directory")
         if new_directory:
-            self._reset_ui()
-            self.current_directory = new_directory
-            self._detect_and_set_format(Path(new_directory))
-            self._load_images(self.current_directory)
-            self._load_classes_for_format()
-            self.dir_label.setText(f"{self.current_directory}")
+            self._open_directory_path(new_directory)
+
+    def _open_directory_path(self, directory_path: str) -> None:
+        """Open a specific directory for annotation."""
+        if not Path(directory_path).is_dir():
+            QMessageBox.warning(
+                self,
+                "Directory Not Found",
+                f"The directory does not exist:\n{directory_path}"
+            )
+            return
+
+        self._reset_ui()
+        self.current_directory = directory_path
+        self._detect_and_set_format(Path(directory_path))
+        self._load_images(self.current_directory)
+        self._load_classes_for_format()
+        self.dir_label.setText(f"{self.current_directory}")
+        self._add_recent_path(directory_path)
+
+    def _add_recent_path(self, path: str) -> None:
+        """Add a path to the recent paths list."""
+        config = self.config_manager.config
+        max_recent = config.max_recent_paths
+
+        # Don't track if disabled
+        if max_recent == 0:
+            return
+
+        recent_paths = list(config.recent_paths)
+
+        # Remove if already exists (to move to top)
+        if path in recent_paths:
+            recent_paths.remove(path)
+
+        # Insert at beginning
+        recent_paths.insert(0, path)
+
+        # Trim to max
+        recent_paths = recent_paths[:max_recent]
+
+        # Save config
+        self.config_manager.update(recent_paths=recent_paths)
+
+        # Update menu
+        self._update_recent_paths_menu()
+
+    def _update_recent_paths_menu(self) -> None:
+        """Update the recent paths submenu."""
+        self.recent_paths_menu.clear()
+
+        config = self.config_manager.config
+        recent_paths = config.recent_paths
+        max_recent = config.max_recent_paths
+
+        # Show disabled state if feature is disabled
+        if max_recent == 0:
+            disabled_action = self.recent_paths_menu.addAction("(Disabled in settings)")
+            disabled_action.setEnabled(False)
+            return
+
+        # Show placeholder if no recent paths
+        if not recent_paths:
+            no_recent_action = self.recent_paths_menu.addAction("No recent paths")
+            no_recent_action.setEnabled(False)
+            return
+
+        # Add recent paths
+        for path in recent_paths:
+            action = self.recent_paths_menu.addAction(path)
+            action.triggered.connect(lambda checked, p=path: self._open_recent_path(p))
+
+        # Add separator and clear action
+        self.recent_paths_menu.addSeparator()
+        clear_action = self.recent_paths_menu.addAction("Clear Recent Paths")
+        clear_action.triggered.connect(self._clear_recent_paths)
+
+    def _open_recent_path(self, path: str) -> None:
+        """Open a path from the recent paths list."""
+        self._open_directory_path(path)
+
+    def _clear_recent_paths(self) -> None:
+        """Clear all recent paths."""
+        self.config_manager.update(recent_paths=[])
+        self._update_recent_paths_menu()
 
     def _detect_and_set_format(self, directory: Path) -> bool:
         """
@@ -2041,6 +2143,26 @@ class MainWindow(QMainWindow):
         self.image_label.set_gpu_acceleration(config.gpu_acceleration)
 
         self.image_label.update()
+
+    def _apply_theme(self) -> None:
+        """Apply the current theme stylesheet to the main window."""
+        self.setStyleSheet(get_theme_manager().get_main_window_stylesheet())
+        # Apply background to scroll area viewport (canvas area)
+        colors = get_theme_manager().colors
+        if self.image_scroll_area:
+            self.image_scroll_area.setStyleSheet(
+                f"QScrollArea {{ background-color: {colors.background_secondary}; border: none; }}"
+            )
+            self.image_scroll_area.viewport().setStyleSheet(
+                f"background-color: {colors.background_secondary};"
+            )
+
+    def _on_theme_changed(self, mode: ThemeMode) -> None:
+        """Handle theme change."""
+        self._apply_theme()
+        # Update format label color based on theme
+        colors = get_theme_manager().colors
+        self.format_label.setStyleSheet(f"QLabel {{ color: {colors.text_muted}; }}")
 
     # === Workspace Operations ===
 

@@ -1,14 +1,18 @@
 autoDetectFormat: true
 autoSelectOnPointClick: true
-autosave: false
+autosave: true
 defaultAnnotationFormat: yolo
-defaultDirectory: ''
+defaultDirectory: /Users/christian/SyncThing/Bilder/Photos
 deleteShapeKey: Ctrl+Backspace
 finishDrawingKey: Esc
 focusOnSelect: true
 fontSize: 12
 gpuAcceleration: true
 lineThickness: 2
+maxRecentPaths: 10
+recentPaths:
+- /Users/christian/SyncThing/Bilder/Stock Images
+theme: dark
 thumbnailCacheEnabled: true
 thumbnailCacheMaxMb: 500
 thumbnailSize: 59

@@ -17,256 +17,9 @@ from PyQt6.QtGui import QKeySequence, QFont
 from ...core.config import AppConfig, ConfigManager
 from ...core.format_registry import FormatRegistry
 from ..drawing_area import is_opengl_available
+from ..theme import get_theme_manager, ThemeMode
 
 logger = logging.getLogger(__name__)
-
-# Modern stylesheet for the settings dialog
-SETTINGS_STYLESHEET = """
-QDialog {
-    background-color: #1e1e1e;
-}
-
-QListWidget {
-    background-color: #252526;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 4px;
-    outline: none;
-}
-
-QListWidget::item {
-    color: #cccccc;
-    padding: 12px 16px;
-    border-radius: 6px;
-    margin: 2px 4px;
-}
-
-QListWidget::item:selected {
-    background-color: #0e639c;
-    color: #ffffff;
-}
-
-QListWidget::item:hover:!selected {
-    background-color: #2a2d2e;
-}
-
-QStackedWidget {
-    background-color: transparent;
-}
-
-QGroupBox {
-    background-color: #252526;
-    border: 1px solid #3c3c3c;
-    border-radius: 8px;
-    margin-top: 16px;
-    padding: 16px;
-    padding-top: 32px;
-    font-weight: bold;
-    color: #cccccc;
-}
-
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    left: 16px;
-    padding: 0 8px;
-    color: #cccccc;
-}
-
-QLabel {
-    color: #cccccc;
-}
-
-QLabel[class="description"] {
-    color: #808080;
-    font-size: 11px;
-}
-
-QLabel[class="section-title"] {
-    color: #ffffff;
-    font-size: 18px;
-    font-weight: bold;
-}
-
-QLineEdit {
-    background-color: #3c3c3c;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 8px 12px;
-    color: #cccccc;
-    selection-background-color: #0e639c;
-}
-
-QLineEdit:focus {
-    border-color: #0e639c;
-}
-
-QLineEdit:disabled {
-    background-color: #2d2d2d;
-    color: #808080;
-}
-
-QSpinBox {
-    background-color: #3c3c3c;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 8px 12px;
-    color: #cccccc;
-    min-width: 80px;
-}
-
-QSpinBox:focus {
-    border-color: #0e639c;
-}
-
-QSpinBox::up-button, QSpinBox::down-button {
-    background-color: #4a4a4a;
-    border: none;
-    width: 20px;
-}
-
-QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-    background-color: #5a5a5a;
-}
-
-QComboBox {
-    background-color: #3c3c3c;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 8px 12px;
-    color: #cccccc;
-    min-width: 150px;
-}
-
-QComboBox:focus {
-    border-color: #0e639c;
-}
-
-QComboBox::drop-down {
-    border: none;
-    width: 24px;
-}
-
-QComboBox::down-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #cccccc;
-    margin-right: 8px;
-}
-
-QComboBox QAbstractItemView {
-    background-color: #3c3c3c;
-    border: 1px solid #555555;
-    selection-background-color: #0e639c;
-    color: #cccccc;
-    padding: 4px;
-    outline: none;
-}
-
-QComboBox QAbstractItemView::item {
-    padding: 6px 8px;
-    min-height: 24px;
-}
-
-QPushButton {
-    background-color: #0e639c;
-    border: none;
-    border-radius: 4px;
-    padding: 8px 16px;
-    color: #ffffff;
-    font-weight: 500;
-}
-
-QPushButton:hover {
-    background-color: #1177bb;
-}
-
-QPushButton:pressed {
-    background-color: #0d5a8c;
-}
-
-QPushButton[class="secondary"] {
-    background-color: #3c3c3c;
-    color: #cccccc;
-}
-
-QPushButton[class="secondary"]:hover {
-    background-color: #4a4a4a;
-}
-
-QCheckBox {
-    color: #cccccc;
-    spacing: 8px;
-}
-
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
-    border: 2px solid #555555;
-    background-color: #3c3c3c;
-}
-
-QCheckBox::indicator:checked {
-    background-color: #0e639c;
-    border-color: #0e639c;
-}
-
-QCheckBox::indicator:hover {
-    border-color: #0e639c;
-}
-
-QKeySequenceEdit {
-    background-color: #3c3c3c;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 8px 12px;
-    color: #cccccc;
-    min-width: 150px;
-}
-
-QKeySequenceEdit:focus {
-    border-color: #0e639c;
-}
-
-QDialogButtonBox {
-    padding: 16px 0 0 0;
-}
-
-QDialogButtonBox QPushButton {
-    min-width: 80px;
-}
-
-QScrollArea {
-    border: none;
-    background-color: transparent;
-}
-
-QScrollArea > QWidget > QWidget {
-    background-color: transparent;
-}
-
-QScrollBar:vertical {
-    background-color: #1e1e1e;
-    width: 12px;
-    border-radius: 6px;
-}
-
-QScrollBar::handle:vertical {
-    background-color: #555555;
-    border-radius: 6px;
-    min-height: 30px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background-color: #666666;
-}
-
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0;
-}
-"""
 
 
 class SettingsDialog(QDialog):
@@ -293,7 +46,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumSize(800, 600)
         self.resize(900, 700)
-        self.setStyleSheet(SETTINGS_STYLESHEET)
+        self._apply_theme()
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(16, 16, 16, 16)
@@ -478,6 +231,15 @@ class SettingsDialog(QDialog):
             "Automatically save annotation files when switching images"
         ))
 
+        self.max_recent_paths_spinbox = QSpinBox()
+        self.max_recent_paths_spinbox.setRange(0, 20)
+        self.max_recent_paths_spinbox.setMinimumWidth(100)
+        files_layout.addWidget(self._create_setting_row(
+            "Recent Paths",
+            self.max_recent_paths_spinbox,
+            "Number of recent paths to remember (0 to disable)"
+        ))
+
         layout.addWidget(files_group)
 
         # Annotation format group
@@ -526,6 +288,24 @@ class SettingsDialog(QDialog):
             "Appearance",
             "Customize how annotations and images are displayed."
         ))
+
+        # Theme group
+        theme_group = QGroupBox("Theme")
+        theme_layout = QVBoxLayout(theme_group)
+        theme_layout.setSpacing(2)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.setMinimumWidth(180)
+        self.theme_combo.addItem("System Default", "system")
+        self.theme_combo.addItem("Light", "light")
+        self.theme_combo.addItem("Dark", "dark")
+        theme_layout.addWidget(self._create_setting_row(
+            "Color Theme",
+            self.theme_combo,
+            "Choose between light, dark, or system-based appearance"
+        ))
+
+        layout.addWidget(theme_group)
 
         # Annotations group
         annotations_group = QGroupBox("Annotations")
@@ -741,6 +521,7 @@ class SettingsDialog(QDialog):
         self.font_size_spinbox.setValue(config.font_size)
         self.thumbnail_size_spinbox.setValue(config.thumbnail_size)
         self.autosave_checkbox.setChecked(config.autosave)
+        self.max_recent_paths_spinbox.setValue(config.max_recent_paths)
         self.focus_on_select_checkbox.setChecked(config.focus_on_select)
         self.zoom_on_select_checkbox.setChecked(config.zoom_on_select)
         index = self.zoom_level_combo.findData(config.zoom_on_select_level)
@@ -765,8 +546,27 @@ class SettingsDialog(QDialog):
         # Rendering settings
         self.gpu_acceleration_checkbox.setChecked(config.gpu_acceleration)
 
+        # Theme settings
+        theme_index = self.theme_combo.findData(config.theme)
+        if theme_index >= 0:
+            self.theme_combo.setCurrentIndex(theme_index)
+
+    def _apply_theme(self) -> None:
+        """Apply the current theme stylesheet."""
+        self.setStyleSheet(get_theme_manager().get_settings_stylesheet())
+
     def _save_settings(self) -> None:
         """Save settings from dialog to configuration."""
+        new_theme = self.theme_combo.currentData()
+        max_recent = self.max_recent_paths_spinbox.value()
+
+        # Preserve and trim recent_paths based on new max setting
+        current_recent_paths = self.config_manager.config.recent_paths
+        if max_recent == 0:
+            recent_paths = []
+        else:
+            recent_paths = current_recent_paths[:max_recent]
+
         config = AppConfig(
             default_directory=self.default_dir_edit.text(),
             yolo_model_path=self.model_path_edit.text(),
@@ -783,9 +583,17 @@ class SettingsDialog(QDialog):
             default_annotation_format=self.default_format_combo.currentData(),
             auto_detect_format=self.auto_detect_format_checkbox.isChecked(),
             gpu_acceleration=self.gpu_acceleration_checkbox.isChecked(),
+            theme=new_theme,
+            max_recent_paths=max_recent,
+            recent_paths=recent_paths,
         )
 
         self.config_manager.save(config)
+
+        # Apply theme change
+        theme_mode = ThemeMode(new_theme)
+        get_theme_manager().set_mode(theme_mode)
+
         logger.info("Settings saved")
         self.accept()
 
@@ -796,6 +604,13 @@ class SettingsDialog(QDialog):
         Returns:
             AppConfig with current dialog values
         """
+        max_recent = self.max_recent_paths_spinbox.value()
+        current_recent_paths = self.config_manager.config.recent_paths
+        if max_recent == 0:
+            recent_paths = []
+        else:
+            recent_paths = current_recent_paths[:max_recent]
+
         return AppConfig(
             default_directory=self.default_dir_edit.text(),
             yolo_model_path=self.model_path_edit.text(),
@@ -812,4 +627,7 @@ class SettingsDialog(QDialog):
             default_annotation_format=self.default_format_combo.currentData(),
             auto_detect_format=self.auto_detect_format_checkbox.isChecked(),
             gpu_acceleration=self.gpu_acceleration_checkbox.isChecked(),
+            theme=self.theme_combo.currentData(),
+            max_recent_paths=max_recent,
+            recent_paths=recent_paths,
         )

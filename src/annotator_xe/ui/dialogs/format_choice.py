@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from annotator_xe.core.format_registry import FormatRegistry
+from ..theme import get_theme_manager
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,9 @@ class FormatChoiceDialog(QDialog):
         self.setMinimumWidth(450)
         self.setModal(True)
 
+        # Apply theme
+        self.setStyleSheet(get_theme_manager().get_dialog_stylesheet())
+
         layout = QVBoxLayout()
         layout.setSpacing(12)
 
@@ -90,7 +94,7 @@ class FormatChoiceDialog(QDialog):
 
             desc_label = QLabel(f"    <i>{description}</i>")
             desc_label.setTextFormat(Qt.TextFormat.RichText)
-            desc_label.setStyleSheet("color: gray;")
+            desc_label.setProperty("class", "description")
             format_layout.addWidget(desc_label)
 
             layout.addLayout(format_layout)

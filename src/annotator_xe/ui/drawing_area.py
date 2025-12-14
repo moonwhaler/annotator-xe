@@ -313,8 +313,10 @@ class GPURenderBackend(RenderBackendMixin):
         self._texture_needs_update = True
         if self._state and self._state.pixmap and not self._state.pixmap.isNull():
             # Set widget size based on scaled dimensions
-            scaled_size = self._state.pixmap.size() * self._state.scale_factor
-            self._widget.setFixedSize(scaled_size.toSize())
+            orig_size = self._state.pixmap.size()
+            scaled_width = int(orig_size.width() * self._state.scale_factor)
+            scaled_height = int(orig_size.height() * self._state.scale_factor)
+            self._widget.setFixedSize(scaled_width, scaled_height)
 
     def setFixedSize(self, *args):
         """Forward setFixedSize to the widget."""
@@ -713,8 +715,10 @@ class DrawingArea(QWidget):
             self._gpu_backend.update_scaled_pixmap()
             # Update container size to match backend
             if self._pixmap and not self._pixmap.isNull():
-                scaled_size = self._pixmap.size() * self.scale_factor
-                self.setFixedSize(scaled_size.toSize())
+                orig_size = self._pixmap.size()
+                scaled_width = int(orig_size.width() * self.scale_factor)
+                scaled_height = int(orig_size.height() * self.scale_factor)
+                self.setFixedSize(scaled_width, scaled_height)
         else:
             self._cpu_backend.update_scaled_pixmap()
             # Update container size to match backend

@@ -25,6 +25,7 @@ from PyQt6.QtCore import Qt
 
 from annotator_xe.core.format_registry import FormatRegistry
 from annotator_xe.core.models import Shape, ShapeType
+from ..theme import get_theme_manager
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,9 @@ class ImportAnnotationsDialog(QDialog):
         self.setWindowTitle("Import Annotations")
         self.setMinimumWidth(550)
         self.setModal(True)
+
+        # Apply theme
+        self.setStyleSheet(get_theme_manager().get_dialog_stylesheet())
 
         layout = QVBoxLayout()
         layout.setSpacing(16)
@@ -405,6 +409,9 @@ class ExportAnnotationsDialog(QDialog):
         self.setWindowTitle("Export Annotations")
         self.setMinimumWidth(500)
         self.setModal(True)
+
+        # Apply theme
+        self.setStyleSheet(get_theme_manager().get_dialog_stylesheet())
 
         layout = QVBoxLayout()
         layout.setSpacing(16)

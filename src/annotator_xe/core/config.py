@@ -40,6 +40,9 @@ class AppConfig:
     default_annotation_format: str = "yolo"  # Default format for new directories
     auto_detect_format: bool = True  # Auto-detect format when opening directory
     gpu_acceleration: bool = False  # Use GPU for hardware-accelerated image rendering
+    theme: str = "system"  # Theme mode: "light", "dark", or "system"
+    max_recent_paths: int = 10  # Number of recent paths to remember (0-20, 0 = disabled)
+    recent_paths: list[str] = field(default_factory=list)  # List of recently opened paths
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -61,6 +64,9 @@ class AppConfig:
             "defaultAnnotationFormat": self.default_annotation_format,
             "autoDetectFormat": self.auto_detect_format,
             "gpuAcceleration": self.gpu_acceleration,
+            "theme": self.theme,
+            "maxRecentPaths": self.max_recent_paths,
+            "recentPaths": self.recent_paths,
         }
 
     @classmethod
@@ -84,6 +90,9 @@ class AppConfig:
             default_annotation_format=data.get("defaultAnnotationFormat", "yolo"),
             auto_detect_format=data.get("autoDetectFormat", True),
             gpu_acceleration=data.get("gpuAcceleration", False),
+            theme=data.get("theme", "system"),
+            max_recent_paths=data.get("maxRecentPaths", 10),
+            recent_paths=data.get("recentPaths", []),
         )
 
 

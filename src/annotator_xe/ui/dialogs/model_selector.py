@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog
 )
 
+from ..theme import get_theme_manager
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +32,9 @@ class ModelSelector(QDialog):
         """Initialize the dialog UI."""
         self.setWindowTitle("Select YOLO Model")
         self.setMinimumWidth(400)
+
+        # Apply theme
+        self.setStyleSheet(get_theme_manager().get_dialog_stylesheet())
 
         layout = QVBoxLayout()
 

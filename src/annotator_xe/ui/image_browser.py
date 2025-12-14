@@ -15,127 +15,42 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.yolo_format import has_annotation
+from .theme import get_theme_manager, ThemeColors
 
 logger = logging.getLogger(__name__)
 
-# Modern stylesheet for the image browser
-IMAGE_BROWSER_STYLESHEET = """
-QWidget#imageBrowserContainer {
-    background-color: #1e1e1e;
-}
-
-QLineEdit#searchBox {
-    background-color: #3c3c3c;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 6px 10px;
-    color: #cccccc;
-    font-size: 12px;
-}
-
-QLineEdit#searchBox:focus {
-    border-color: #0e639c;
-}
-
-QLineEdit#searchBox::placeholder {
-    color: #808080;
-}
-
-QLabel#statsLabel {
-    color: #808080;
-    font-size: 11px;
-    padding: 4px 0;
-}
-
-QLabel#sizeLabel {
-    color: #808080;
-    font-size: 11px;
-    min-width: 40px;
-}
-
-QSlider::groove:horizontal {
-    background-color: #3c3c3c;
-    height: 4px;
-    border-radius: 2px;
-}
-
-QSlider::handle:horizontal {
-    background-color: #0e639c;
-    width: 14px;
-    height: 14px;
-    margin: -5px 0;
-    border-radius: 7px;
-}
-
-QSlider::handle:horizontal:hover {
-    background-color: #1177bb;
-}
-
-QListWidget#imageList {
-    background-color: #252526;
-    border: none;
-    border-radius: 6px;
-    padding: 8px;
-    outline: none;
-}
-
-QListWidget#imageList::item {
-    background-color: #2d2d2d;
-    border: 1px solid #3c3c3c;
-    border-radius: 4px;
-    padding: 4px;
-}
-
-QListWidget#imageList::item:selected {
-    background-color: #094771;
-    border-color: #0e639c;
-}
-
-QListWidget#imageList::item:hover:!selected {
-    background-color: #363636;
-    border-color: #4a4a4a;
-}
-
-QScrollBar:vertical {
-    background-color: #252526;
-    width: 10px;
-    border-radius: 5px;
-}
-
-QScrollBar::handle:vertical {
-    background-color: #555555;
-    border-radius: 5px;
-    min-height: 30px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background-color: #666666;
-}
-
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0;
-}
-"""
-
-# Cache for placeholder icons by size
+# Cache for placeholder icons by size and theme
 _placeholder_icons: dict = {}
+_placeholder_theme_key: str = ""
 
 
-def create_placeholder_icon(size: int) -> QIcon:
+def create_placeholder_icon(size: int, colors: Optional[ThemeColors] = None) -> QIcon:
     """
     Create a placeholder icon for images not yet loaded.
 
     Args:
         size: Size of the placeholder icon
+        colors: Theme colors to use (defaults to current theme)
 
     Returns:
-        QIcon with a gray placeholder design
+        QIcon with a placeholder design matching current theme
     """
+    global _placeholder_theme_key, _placeholder_icons
+
+    if colors is None:
+        colors = get_theme_manager().colors
+
+    # Cache key includes theme to invalidate on theme change
+    theme_key = colors.background_tertiary
+    if theme_key != _placeholder_theme_key:
+        _placeholder_icons.clear()
+        _placeholder_theme_key = theme_key
+
     if size in _placeholder_icons:
         return _placeholder_icons[size]
 
     pixmap = QPixmap(size, size)
-    pixmap.fill(QColor(45, 45, 45))  # Dark gray background
+    pixmap.fill(QColor(colors.background_tertiary))
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -146,7 +61,7 @@ def create_placeholder_icon(size: int) -> QIcon:
     center_y = size // 2
 
     # Draw mountain/image icon outline
-    painter.setPen(QPen(QColor(80, 80, 80), max(1, size // 40)))
+    painter.setPen(QPen(QColor(colors.border), max(1, size // 40)))
     painter.setBrush(Qt.BrushStyle.NoBrush)
 
     # Outer rectangle
@@ -155,7 +70,7 @@ def create_placeholder_icon(size: int) -> QIcon:
 
     # Simple mountain shapes
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(70, 70, 70))
+    painter.setBrush(QColor(colors.surface))
 
     # Small mountain
     points_small = [
@@ -177,7 +92,7 @@ def create_placeholder_icon(size: int) -> QIcon:
 
     # Sun circle
     sun_radius = icon_size // 6
-    painter.setBrush(QColor(70, 70, 70))
+    painter.setBrush(QColor(colors.surface))
     painter.drawEllipse(
         center_x - icon_size // 3 - sun_radius,
         center_y - icon_size // 3,
@@ -552,7 +467,10 @@ class ImageBrowserWidget(QWidget):
     def _init_ui(self) -> None:
         """Initialize the UI."""
         self.setObjectName("imageBrowserContainer")
-        self.setStyleSheet(IMAGE_BROWSER_STYLESHEET)
+        self._apply_theme()
+
+        # Register for theme changes
+        get_theme_manager().register_callback(self._on_theme_changed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -631,6 +549,14 @@ class ImageBrowserWidget(QWidget):
     def update_stats(self) -> None:
         """Public method to update stats."""
         self._update_stats()
+
+    def _apply_theme(self) -> None:
+        """Apply the current theme stylesheet."""
+        self.setStyleSheet(get_theme_manager().get_image_browser_stylesheet())
+
+    def _on_theme_changed(self, mode) -> None:
+        """Handle theme change."""
+        self._apply_theme()
 
 
 def add_annotation_marker(icon: QIcon, size: int = 80) -> QIcon:
