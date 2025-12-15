@@ -6,7 +6,7 @@ import copy
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -128,6 +128,36 @@ class MoveShapeCommand(Command):
     @property
     def description(self) -> str:
         return "Move Shape"
+
+
+class ResizeShapeCommand(Command):
+    """Command for resizing a shape."""
+
+    def __init__(
+        self,
+        shape: Shape,
+        old_points: list,
+        new_points: list,
+        on_change: Optional[Callable[[], None]] = None
+    ) -> None:
+        self._shape = shape
+        self._old_points = old_points
+        self._new_points = new_points
+        self._on_change = on_change
+
+    def execute(self) -> None:
+        self._shape.points = [p.__class__(p) for p in self._new_points]
+        if self._on_change:
+            self._on_change()
+
+    def undo(self) -> None:
+        self._shape.points = [p.__class__(p) for p in self._old_points]
+        if self._on_change:
+            self._on_change()
+
+    @property
+    def description(self) -> str:
+        return "Resize Shape"
 
 
 class MovePointCommand(Command):
@@ -340,3 +370,100 @@ class UndoRedoManager(QObject):
     def redo_count(self) -> int:
         """Get the number of commands that can be redone."""
         return len(self._redo_stack)
+
+    def get_history(self) -> List[Tuple[int, str, bool]]:
+        """
+        Get the full history as a list of tuples.
+
+        Returns:
+            List of (index, description, is_undo_stack) tuples.
+            - Undo stack items (past actions) have is_undo_stack=True
+            - Redo stack items (undone actions) have is_undo_stack=False
+            - Index is the position in respective stack (0 = oldest)
+        """
+        history = []
+
+        # Add undo stack items (past actions, oldest first)
+        for i, cmd in enumerate(self._undo_stack):
+            history.append((i, cmd.description, True))
+
+        # Add redo stack items (future actions, in reverse so newest redo is first)
+        for i, cmd in enumerate(reversed(self._redo_stack)):
+            history.append((len(self._redo_stack) - 1 - i, cmd.description, False))
+
+        return history
+
+    def undo_to(self, steps: int) -> bool:
+        """
+        Undo multiple steps at once.
+
+        Args:
+            steps: Number of steps to undo
+
+        Returns:
+            True if at least one command was undone
+        """
+        if steps <= 0:
+            return False
+
+        success = False
+        for _ in range(steps):
+            if not self._undo_stack:
+                break
+
+            command = self._undo_stack.pop()
+            command.undo()
+            self._redo_stack.append(command)
+            logger.debug(f"Undone: {command.description}")
+            success = True
+
+        # Only emit once after all undos are complete
+        if success:
+            self.state_changed.emit()
+
+        return success
+
+    def redo_to(self, steps: int) -> bool:
+        """
+        Redo multiple steps at once.
+
+        Args:
+            steps: Number of steps to redo
+
+        Returns:
+            True if at least one command was redone
+        """
+        if steps <= 0:
+            return False
+
+        success = False
+        for _ in range(steps):
+            if not self._redo_stack:
+                break
+
+            command = self._redo_stack.pop()
+            command.execute()
+            self._undo_stack.append(command)
+            logger.debug(f"Redone: {command.description}")
+            success = True
+
+        # Only emit once after all redos are complete
+        if success:
+            self.state_changed.emit()
+
+        return success
+
+    def set_max_history(self, max_history: int) -> None:
+        """
+        Update the maximum history size.
+
+        Args:
+            max_history: New maximum number of commands to keep
+        """
+        self._max_history = max(1, max_history)  # Ensure at least 1
+
+        # Trim undo stack if necessary
+        while len(self._undo_stack) > self._max_history:
+            self._undo_stack.pop(0)
+
+        self.state_changed.emit()

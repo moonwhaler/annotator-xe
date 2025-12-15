@@ -438,6 +438,23 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(drawing_group)
 
+        # History group
+        history_group = QGroupBox("History")
+        history_layout = QVBoxLayout(history_group)
+        history_layout.setSpacing(2)
+
+        self.max_history_entries_spinbox = QSpinBox()
+        self.max_history_entries_spinbox.setRange(10, 1000)
+        self.max_history_entries_spinbox.setSingleStep(10)
+        self.max_history_entries_spinbox.setMinimumWidth(100)
+        history_layout.addWidget(self._create_setting_row(
+            "History Entries",
+            self.max_history_entries_spinbox,
+            "Maximum number of undo/redo actions to keep in history (10-1000)"
+        ))
+
+        layout.addWidget(history_group)
+
         layout.addStretch()
         return self._create_scrollable_page(page)
 
@@ -551,6 +568,9 @@ class SettingsDialog(QDialog):
         if theme_index >= 0:
             self.theme_combo.setCurrentIndex(theme_index)
 
+        # History settings
+        self.max_history_entries_spinbox.setValue(config.max_history_entries)
+
     def _apply_theme(self) -> None:
         """Apply the current theme stylesheet."""
         self.setStyleSheet(get_theme_manager().get_settings_stylesheet())
@@ -586,6 +606,7 @@ class SettingsDialog(QDialog):
             theme=new_theme,
             max_recent_paths=max_recent,
             recent_paths=recent_paths,
+            max_history_entries=self.max_history_entries_spinbox.value(),
         )
 
         self.config_manager.save(config)
@@ -630,4 +651,5 @@ class SettingsDialog(QDialog):
             theme=self.theme_combo.currentData(),
             max_recent_paths=max_recent,
             recent_paths=recent_paths,
+            max_history_entries=self.max_history_entries_spinbox.value(),
         )

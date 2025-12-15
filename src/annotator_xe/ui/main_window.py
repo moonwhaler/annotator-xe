@@ -41,6 +41,7 @@ from .image_browser import (
     add_annotation_marker, create_placeholder_icon
 )
 from .theme import get_theme_manager, ThemeMode
+from .history_panel import HistoryPanel
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
         self.shape_list: Optional[QListWidget] = None
         self.zoom_slider: Optional[QSlider] = None
         self.hide_tagged_checkbox: Optional[QCheckBox] = None
+        self.history_panel: Optional[HistoryPanel] = None
 
         # Status bar elements
         self.status_bar: Optional[QStatusBar] = None
@@ -182,6 +184,7 @@ class MainWindow(QMainWindow):
         self.image_label.auto_select_on_point_click = self.config.auto_select_on_point_click
         self.image_label.finish_drawing_key = self.config.finish_drawing_key
         self.image_label.delete_shape_key = self.config.delete_shape_key
+        self.image_label.undo_manager.set_max_history(self.config.max_history_entries)
 
         self.image_scroll_area.setWidget(self.image_label)
         self.image_scroll_area.setWidgetResizable(True)
@@ -277,6 +280,16 @@ class MainWindow(QMainWindow):
         )
         self.dock_widgets["Shapes"].setWidget(self._create_shapes_widget())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["Shapes"])
+
+        # History Dock
+        self.dock_widgets["History"] = QDockWidget("History", self)
+        self.dock_widgets["History"].setObjectName("HistoryDock")
+        self.dock_widgets["History"].setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.dock_widgets["History"].setWidget(self._create_history_widget())
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widgets["History"])
+        self.dock_widgets["History"].hide()  # Hidden by default
 
     def _create_image_browser_widget(self) -> QWidget:
         """Create the image browser widget."""
@@ -435,6 +448,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(delete_button)
 
         return widget
+
+    def _create_history_widget(self) -> QWidget:
+        """Create the history panel widget."""
+        self.history_panel = HistoryPanel()
+        return self.history_panel
 
     def _create_toolbar(self) -> None:
         """Create the main toolbar."""
@@ -605,6 +623,11 @@ class MainWindow(QMainWindow):
 
         # Undo/Redo state changes
         self.image_label.undo_manager.state_changed.connect(self._update_undo_redo_state)
+
+        # Connect history panel to undo manager
+        if self.history_panel:
+            self.history_panel.set_undo_manager(self.image_label.undo_manager)
+            self.history_panel.history_navigated.connect(self._on_history_navigated)
 
         # Scroll area signals for minimap
         self.image_scroll_area.horizontalScrollBar().valueChanged.connect(
@@ -1971,6 +1994,13 @@ class MainWindow(QMainWindow):
         else:
             self.redo_action.setToolTip("Redo")
 
+    def _on_history_navigated(self) -> None:
+        """Handle navigation via the history panel."""
+        self._update_shape_list()
+        self.image_label.update()
+        if self.config.autosave:
+            self._save_yolo()
+
     # === Minimap Operations ===
 
     def _update_minimap(self) -> None:
@@ -2144,6 +2174,9 @@ class MainWindow(QMainWindow):
 
         # Apply GPU acceleration setting (takes effect immediately)
         self.image_label.set_gpu_acceleration(config.gpu_acceleration)
+
+        # Apply history settings
+        self.image_label.undo_manager.set_max_history(config.max_history_entries)
 
         self.image_label.update()
 

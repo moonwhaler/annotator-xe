@@ -43,6 +43,7 @@ class AppConfig:
     theme: str = "system"  # Theme mode: "light", "dark", or "system"
     max_recent_paths: int = 10  # Number of recent paths to remember (0-20, 0 = disabled)
     recent_paths: list[str] = field(default_factory=list)  # List of recently opened paths
+    max_history_entries: int = 100  # Maximum undo/redo history entries (10-1000)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -67,6 +68,7 @@ class AppConfig:
             "theme": self.theme,
             "maxRecentPaths": self.max_recent_paths,
             "recentPaths": self.recent_paths,
+            "maxHistoryEntries": self.max_history_entries,
         }
 
     @classmethod
@@ -93,6 +95,7 @@ class AppConfig:
             theme=data.get("theme", "system"),
             max_recent_paths=data.get("maxRecentPaths", 10),
             recent_paths=data.get("recentPaths", []),
+            max_history_entries=data.get("maxHistoryEntries", 100),
         )
 
 

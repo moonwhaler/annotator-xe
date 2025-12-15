@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (
 from ..core.models import Shape, ShapeType
 from ..core.undo_redo import (
     UndoRedoManager, AddShapeCommand, DeleteShapeCommand,
-    MoveShapeCommand, MovePointCommand, ChangeLabelCommand, DeletePointsCommand
+    MoveShapeCommand, MovePointCommand, ChangeLabelCommand, DeletePointsCommand,
+    ResizeShapeCommand
 )
 
 logger = logging.getLogger(__name__)
@@ -905,13 +906,21 @@ class DrawingArea(QWidget):
         if self.selected_shape and self._move_start_points:
             new_points = [QPointF(p) for p in self.selected_shape.points]
             if self._move_start_points != new_points:
-                # Shape was moved or resized - create command (already executed)
-                cmd = MoveShapeCommand(
-                    self.selected_shape,
-                    self._move_start_points,
-                    new_points,
-                    self._on_undo_redo_change
-                )
+                # Shape was moved or resized - create appropriate command (already executed)
+                if self.resize_handle:
+                    cmd = ResizeShapeCommand(
+                        self.selected_shape,
+                        self._move_start_points,
+                        new_points,
+                        self._on_undo_redo_change
+                    )
+                else:
+                    cmd = MoveShapeCommand(
+                        self.selected_shape,
+                        self._move_start_points,
+                        new_points,
+                        self._on_undo_redo_change
+                    )
                 # Add to undo stack without re-executing
                 self.undo_manager._undo_stack.append(cmd)
                 self.undo_manager._redo_stack.clear()
