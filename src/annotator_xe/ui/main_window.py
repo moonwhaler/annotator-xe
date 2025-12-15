@@ -26,6 +26,7 @@ from ..core.config import ConfigManager, AppConfig, YOLODataConfigManager
 from ..core.detector import YOLODetector
 from ..core.format_registry import FormatRegistry
 from ..core.models import Shape, ShapeType
+from ..core.undo_redo import ChangeLabelCommand, BatchChangeLabelCommand
 from ..core.yolo_format import YOLOAnnotationReader, YOLOAnnotationWriter
 from ..workers.image_loader import ImageLoader, ImageScanner, ThumbnailLoader, get_image_files
 from ..core.thumbnail_cache import get_thumbnail_cache, ThumbnailCache
@@ -1627,13 +1628,24 @@ class MainWindow(QMainWindow):
         selected_class = self.class_model.itemFromIndex(selected[0]).text()
 
         if self.image_label.selected_shape:
-            self.image_label.selected_shape.label = selected_class
-            self.image_label.update()
-            self._update_shapes()
-            if self.config.autosave:
-                self._save_yolo()
+            old_label = self.image_label.selected_shape.label
+            if old_label != selected_class:
+                cmd = ChangeLabelCommand(
+                    self.image_label.selected_shape,
+                    old_label,
+                    selected_class,
+                    self._on_label_change
+                )
+                self.image_label.undo_manager.execute(cmd)
         else:
             QMessageBox.warning(self, "Warning", "Please select a shape first.")
+
+    def _on_label_change(self) -> None:
+        """Callback for label change operations to refresh display."""
+        self.image_label.update()
+        self._update_shape_list()
+        if self.config.autosave:
+            self._save_yolo()
 
     def _update_classification_list(self) -> None:
         """Update the classification list display."""
@@ -1644,17 +1656,33 @@ class MainWindow(QMainWindow):
 
     def _update_shape_labels(self, old_label: str, new_label: str) -> None:
         """Update shape labels when classification is renamed."""
-        for shape in self.image_label.shapes:
-            if shape.label == old_label:
-                shape.label = new_label
-        self.image_label.update()
+        # Check if any shapes have this label
+        has_affected_shapes = any(s.label == old_label for s in self.image_label.shapes)
+        if has_affected_shapes:
+            cmd = BatchChangeLabelCommand(
+                self.image_label.shapes,
+                old_label,
+                new_label,
+                self._on_label_change
+            )
+            self.image_label.undo_manager.execute(cmd)
+        else:
+            self.image_label.update()
 
     def _remove_shape_labels(self, label: str) -> None:
         """Remove label from shapes when classification is deleted."""
-        for shape in self.image_label.shapes:
-            if shape.label == label:
-                shape.label = ""
-        self.image_label.update()
+        # Check if any shapes have this label
+        has_affected_shapes = any(s.label == label for s in self.image_label.shapes)
+        if has_affected_shapes:
+            cmd = BatchChangeLabelCommand(
+                self.image_label.shapes,
+                label,
+                "",  # Empty string to clear the label
+                self._on_label_change
+            )
+            self.image_label.undo_manager.execute(cmd)
+        else:
+            self.image_label.update()
 
     def _handle_classification_change(self, new_label: str) -> None:
         """Handle classification change from drawing area."""

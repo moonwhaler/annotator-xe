@@ -258,6 +258,55 @@ class DeletePointsCommand(Command):
         return f"Delete {count} Point{'s' if count > 1 else ''}"
 
 
+class BatchChangeLabelCommand(Command):
+    """Command for changing labels on multiple shapes at once."""
+
+    def __init__(
+        self,
+        shapes: List[Shape],
+        old_label: str,
+        new_label: str,
+        on_change: Optional[Callable[[], None]] = None
+    ) -> None:
+        """
+        Initialize the batch label change command.
+
+        Args:
+            shapes: List of shapes to modify (only those with old_label will be changed)
+            old_label: The label to replace
+            new_label: The new label to apply
+            on_change: Callback to execute after changes
+        """
+        self._shapes = shapes
+        self._old_label = old_label
+        self._new_label = new_label
+        self._on_change = on_change
+        # Track which shapes were actually modified
+        self._affected_shapes: List[Shape] = []
+
+    def execute(self) -> None:
+        self._affected_shapes = []
+        for shape in self._shapes:
+            if shape.label == self._old_label:
+                shape.label = self._new_label
+                self._affected_shapes.append(shape)
+        if self._on_change:
+            self._on_change()
+
+    def undo(self) -> None:
+        for shape in self._affected_shapes:
+            shape.label = self._old_label
+        if self._on_change:
+            self._on_change()
+
+    @property
+    def description(self) -> str:
+        if self._new_label:
+            return f"Rename '{self._old_label}' to '{self._new_label}'"
+        else:
+            return f"Clear label '{self._old_label}'"
+
+
 class UndoRedoManager(QObject):
     """
     Manages undo/redo stacks for the application.
