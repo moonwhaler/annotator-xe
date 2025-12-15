@@ -312,9 +312,8 @@ class MainWindow(QMainWindow):
         self.order_combo.currentTextChanged.connect(self._change_sort_order)
 
         sort_layout.addWidget(QLabel("Sort:"))
-        sort_layout.addWidget(self.sort_combo)
-        sort_layout.addWidget(self.order_combo)
-        sort_layout.addStretch()
+        sort_layout.addWidget(self.sort_combo, 1)
+        sort_layout.addWidget(self.order_combo, 1)
         layout.addLayout(sort_layout)
 
         # Modern image browser widget
