@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 from PyQt6.QtCore import QObject, pyqtSignal
 
 if TYPE_CHECKING:
+    from PyQt6.QtCore import QPointF
     from ..core.models import Shape
 
 logger = logging.getLogger(__name__)
@@ -256,6 +257,79 @@ class DeletePointsCommand(Command):
     def description(self) -> str:
         count = len(self._deleted_points)
         return f"Delete {count} Point{'s' if count > 1 else ''}"
+
+
+class TransformShapeCommand(Command):
+    """Command for transforming (scaling/rotating) a shape."""
+
+    def __init__(
+        self,
+        shape: 'Shape',
+        old_points: list,
+        new_points: list,
+        transform_type: str = "transform",
+        on_change: Optional[Callable[[], None]] = None
+    ) -> None:
+        self._shape = shape
+        self._old_points = old_points
+        self._new_points = new_points
+        self._transform_type = transform_type
+        self._on_change = on_change
+
+    def execute(self) -> None:
+        self._shape.points = [p.__class__(p) for p in self._new_points]
+        if self._on_change:
+            self._on_change()
+
+    def undo(self) -> None:
+        self._shape.points = [p.__class__(p) for p in self._old_points]
+        if self._on_change:
+            self._on_change()
+
+    @property
+    def description(self) -> str:
+        return f"{self._transform_type.capitalize()} Shape"
+
+
+class TransformPointsCommand(Command):
+    """Command for transforming (scaling/rotating) selected points across shapes."""
+
+    def __init__(
+        self,
+        point_changes: List[Tuple['Shape', int, 'QPointF', 'QPointF']],
+        transform_type: str = "transform",
+        on_change: Optional[Callable[[], None]] = None
+    ) -> None:
+        """
+        Initialize the transform points command.
+
+        Args:
+            point_changes: List of (shape, point_index, old_position, new_position) tuples
+            transform_type: Type of transformation ("scale", "rotate", or "transform")
+            on_change: Callback to execute after changes
+        """
+        self._point_changes = point_changes
+        self._transform_type = transform_type
+        self._on_change = on_change
+
+    def execute(self) -> None:
+        for shape, idx, _, new_pos in self._point_changes:
+            if 0 <= idx < len(shape.points):
+                shape.points[idx] = new_pos.__class__(new_pos)
+        if self._on_change:
+            self._on_change()
+
+    def undo(self) -> None:
+        for shape, idx, old_pos, _ in self._point_changes:
+            if 0 <= idx < len(shape.points):
+                shape.points[idx] = old_pos.__class__(old_pos)
+        if self._on_change:
+            self._on_change()
+
+    @property
+    def description(self) -> str:
+        count = len(self._point_changes)
+        return f"{self._transform_type.capitalize()} {count} Point{'s' if count > 1 else ''}"
 
 
 class BatchChangeLabelCommand(Command):

@@ -308,12 +308,15 @@ class CreateMLAnnotationFormat(AnnotationFormat):
 
                 for shape in shapes:
                     # Get bounding box coordinates
-                    if shape.type == ShapeType.BOX and len(shape.points) >= 2:
+                    if shape.type == ShapeType.BOX and len(shape.points) == 2:
+                        # Standard 2-point axis-aligned box
                         x1 = min(shape.points[0].x(), shape.points[1].x())
                         y1 = min(shape.points[0].y(), shape.points[1].y())
                         x2 = max(shape.points[0].x(), shape.points[1].x())
                         y2 = max(shape.points[0].y(), shape.points[1].y())
-                    elif shape.type == ShapeType.POLYGON and shape.points:
+                    elif (shape.type == ShapeType.BOX and len(shape.points) > 2) or \
+                         (shape.type == ShapeType.POLYGON and shape.points):
+                        # 4-point boxes (rotated) and polygons: convert to bounding box
                         # Convert polygon to bounding box
                         polygon_converted = True
                         xs = [p.x() for p in shape.points]

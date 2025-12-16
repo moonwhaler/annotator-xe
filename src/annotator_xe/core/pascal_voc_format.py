@@ -228,12 +228,15 @@ class PascalVOCAnnotationFormat(AnnotationFormat):
                 difficult_elem.text = "0"
 
                 # Get bounding box coordinates
-                if shape.type == ShapeType.BOX and len(shape.points) >= 2:
+                if shape.type == ShapeType.BOX and len(shape.points) == 2:
+                    # Standard 2-point axis-aligned box
                     xmin = min(shape.points[0].x(), shape.points[1].x())
                     ymin = min(shape.points[0].y(), shape.points[1].y())
                     xmax = max(shape.points[0].x(), shape.points[1].x())
                     ymax = max(shape.points[0].y(), shape.points[1].y())
-                elif shape.type == ShapeType.POLYGON and shape.points:
+                elif (shape.type == ShapeType.BOX and len(shape.points) > 2) or \
+                     (shape.type == ShapeType.POLYGON and shape.points):
+                    # 4-point boxes (rotated) and polygons: convert to bounding box
                     # Convert polygon to bounding box
                     polygon_converted = True
                     xs = [p.x() for p in shape.points]

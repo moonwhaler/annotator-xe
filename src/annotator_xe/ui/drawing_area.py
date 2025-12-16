@@ -6,6 +6,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from ..core.config import ConfigManager
+
 from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal, QPoint, QEvent
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QFont, QPainterPath, QPolygonF,
@@ -14,14 +17,14 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QLabel, QMenu, QInputDialog, QScrollArea, QGestureEvent,
-    QApplication, QWidget, QStackedLayout
+    QApplication, QWidget, QStackedLayout, QMessageBox, QCheckBox
 )
 
 from ..core.models import Shape, ShapeType
 from ..core.undo_redo import (
     UndoRedoManager, AddShapeCommand, DeleteShapeCommand,
     MoveShapeCommand, MovePointCommand, ChangeLabelCommand, DeletePointsCommand,
-    ResizeShapeCommand
+    ResizeShapeCommand, TransformShapeCommand, TransformPointsCommand
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +85,13 @@ class RenderState:
     box_color: QColor = field(default_factory=lambda: QColor("#FF0000"))
     polygon_color: QColor = field(default_factory=lambda: QColor("#00FF00"))
 
+    # Transform mode state
+    transform_active: bool = False
+    transform_center: Optional[QPointF] = None
+    transform_bounds: Optional[QRectF] = None
+    transform_rotation_handle: Optional[QPointF] = None
+    transform_scale_handles: List[QPointF] = field(default_factory=list)
+
 
 class RenderBackendMixin:
     """
@@ -104,7 +114,12 @@ class RenderBackendMixin:
         painter.setBrush(QColor(color.red(), color.green(), color.blue(), 64))
 
         if shape.type == ShapeType.BOX:
-            painter.drawRect(QRectF(shape.points[0], shape.points[1]).normalized())
+            if len(shape.points) > 2:
+                # Rotated box with 4 corners - draw as polygon
+                painter.drawPolygon(QPolygonF(shape.points))
+            else:
+                # Standard axis-aligned box with 2 points
+                painter.drawRect(QRectF(shape.points[0], shape.points[1]).normalized())
         elif shape.type == ShapeType.POLYGON:
             painter.drawPolygon(QPolygonF(shape.points))
 
@@ -200,6 +215,71 @@ class RenderBackendMixin:
                 painter.drawEllipse(preview_point, 6 / state.scale_factor, 6 / state.scale_factor)
                 painter.setBrush(highlight_color)
                 painter.drawEllipse(preview_point, 3 / state.scale_factor, 3 / state.scale_factor)
+
+        # Draw transform handles
+        if state.transform_active and state.transform_bounds:
+            self._draw_transform_handles(painter, state)
+
+    def _draw_transform_handles(self, painter: QPainter, state: RenderState) -> None:
+        """Draw transform handles (scale corners and rotation handle)."""
+        bounds = state.transform_bounds
+        center = state.transform_center
+        handle_size = 8 / state.scale_factor
+
+        # Draw bounding box
+        painter.setPen(QPen(QColor(0, 150, 255), 2 / state.scale_factor, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(bounds)
+
+        # Draw center point
+        if center:
+            painter.setPen(QPen(QColor(0, 150, 255), 2 / state.scale_factor))
+            painter.setBrush(QColor(0, 150, 255, 100))
+            painter.drawEllipse(center, 4 / state.scale_factor, 4 / state.scale_factor)
+            # Draw crosshair at center
+            cross_size = 8 / state.scale_factor
+            painter.drawLine(
+                QPointF(center.x() - cross_size, center.y()),
+                QPointF(center.x() + cross_size, center.y())
+            )
+            painter.drawLine(
+                QPointF(center.x(), center.y() - cross_size),
+                QPointF(center.x(), center.y() + cross_size)
+            )
+
+        # Draw scale handles at corners
+        scale_color = QColor(50, 200, 50)
+        painter.setPen(QPen(scale_color, 2 / state.scale_factor))
+        painter.setBrush(QColor(255, 255, 255, 220))
+
+        corners = [
+            bounds.topLeft(),
+            bounds.topRight(),
+            bounds.bottomLeft(),
+            bounds.bottomRight()
+        ]
+
+        for corner in corners:
+            painter.drawRect(QRectF(
+                corner.x() - handle_size / 2,
+                corner.y() - handle_size / 2,
+                handle_size,
+                handle_size
+            ))
+
+        # Draw rotation handle (circle above center of top edge)
+        if state.transform_rotation_handle:
+            rot_handle = state.transform_rotation_handle
+            rotation_color = QColor(255, 100, 50)
+            painter.setPen(QPen(rotation_color, 2 / state.scale_factor))
+            painter.setBrush(QColor(255, 255, 255, 220))
+
+            # Line from top center to rotation handle
+            top_center = QPointF(bounds.center().x(), bounds.top())
+            painter.drawLine(top_center, rot_handle)
+
+            # Rotation handle circle
+            painter.drawEllipse(rot_handle, handle_size / 2, handle_size / 2)
 
     def _closest_point_on_line(self, p: QPointF, a: QPointF, b: QPointF) -> QPointF:
         """Find the closest point on line segment a-b to point p."""
@@ -492,6 +572,9 @@ class DrawingArea(QWidget):
         self.finish_drawing_key = "Escape"  # Key/combination to finish drawing
         self.delete_shape_key = "Delete"  # Key/combination to delete selected shape
 
+        # Configuration manager (set by parent window)
+        self.config_manager: Optional[ConfigManager] = None
+
         # Undo/Redo manager
         self.undo_manager = UndoRedoManager()
 
@@ -565,6 +648,19 @@ class DrawingArea(QWidget):
 
         # Point insertion state
         self._inserting_point = False
+
+        # Transform tool state
+        self._transform_active = False
+        self._transform_center: Optional[QPointF] = None
+        self._transform_bounds: Optional[QRectF] = None
+        self._transform_rotation_handle: Optional[QPointF] = None
+        self._transform_start_points: Optional[List[Tuple[Shape, int, QPointF]]] = None
+        self._transform_shape_start_points: Optional[List[QPointF]] = None
+        self._transform_drag_type: Optional[str] = None  # "scale", "rotate", or None
+        self._transform_drag_corner: Optional[str] = None  # "topleft", "topright", etc.
+        self._transform_start_angle: float = 0.0
+        self._transform_start_scale: float = 1.0
+        self._transform_drag_start: Optional[QPointF] = None
 
         # Widget setup
         self.setMouseTracking(True)
@@ -681,6 +777,11 @@ class DrawingArea(QWidget):
         self._render_state.font_size = self.font_size
         self._render_state.box_color = self.box_color
         self._render_state.polygon_color = self.polygon_color
+        # Transform state
+        self._render_state.transform_active = self._transform_active
+        self._render_state.transform_center = self._transform_center
+        self._render_state.transform_bounds = self._transform_bounds
+        self._render_state.transform_rotation_handle = self._transform_rotation_handle
 
     def set_scroll_area(self, scroll_area: QScrollArea) -> None:
         """Set the parent scroll area for pan support."""
@@ -694,6 +795,15 @@ class DrawingArea(QWidget):
         self._selection_rect_start = None
         self._selection_rect_end = None
         self._drawing_selection_rect = False
+        # Clear transform state
+        self._transform_active = False
+        self._transform_center = None
+        self._transform_bounds = None
+        self._transform_rotation_handle = None
+        self._transform_start_points = None
+        self._transform_shape_start_points = None
+        self._transform_drag_type = None
+        self._transform_drag_corner = None
 
     def set_scale_factor(self, factor: float) -> None:
         """
@@ -864,6 +974,8 @@ class DrawingArea(QWidget):
             self._handle_move_click(transformed_pos)
         elif self.current_tool == "box":
             self._handle_box_click(transformed_pos)
+        elif self.current_tool == "transform":
+            self._handle_transform_click(transformed_pos, event)
 
         self.update()
 
@@ -884,6 +996,8 @@ class DrawingArea(QWidget):
         elif self.current_tool == "polygon" and self.moving_point:
             # Handle dragging a newly inserted point
             self._move_polygon_point(transformed_pos)
+        elif self.current_tool == "transform":
+            self._handle_transform_move(transformed_pos)
 
         self._update_hover(transformed_pos)
         self.update()
@@ -968,6 +1082,10 @@ class DrawingArea(QWidget):
         if self._inserting_point and self.selected_shape:
             # Emit shapes_changed to trigger autosave and update UI
             self.shapes_changed.emit()
+
+        # Handle transform tool release
+        if self.current_tool == "transform":
+            self._handle_transform_release(pos)
 
         self.selecting = False
         self.moving_shape = False
@@ -1141,7 +1259,12 @@ class DrawingArea(QWidget):
         painter.setBrush(QColor(color.red(), color.green(), color.blue(), 64))
 
         if shape.type == ShapeType.BOX:
-            painter.drawRect(QRectF(shape.points[0], shape.points[1]).normalized())
+            if len(shape.points) > 2:
+                # Rotated box with 4 corners - draw as polygon
+                painter.drawPolygon(QPolygonF(shape.points))
+            else:
+                # Standard axis-aligned box with 2 points
+                painter.drawRect(QRectF(shape.points[0], shape.points[1]).normalized())
         elif shape.type == ShapeType.POLYGON:
             painter.drawPolygon(QPolygonF(shape.points))
 
@@ -1274,8 +1397,8 @@ class DrawingArea(QWidget):
         self.selected_points = [(shape, point_index)]
         self.shape_selected.emit(shape)
 
-        if shape.type == ShapeType.BOX:
-            # For boxes, set up resize handle
+        if shape.type == ShapeType.BOX and len(shape.points) == 2:
+            # For standard 2-point boxes, set up resize handle
             rect = QRectF(shape.points[0], shape.points[1]).normalized()
             handle_map = {
                 0: "topleft",
@@ -1296,7 +1419,7 @@ class DrawingArea(QWidget):
             self.resize_handle = (shape, handle)
             self._move_start_points = [QPointF(p) for p in shape.points]
         else:
-            # For polygons, set up point dragging
+            # For polygons and 4-point boxes (rotated), set up point dragging
             self.moving_point = shape.points[point_index]
             self._point_move_start = QPointF(shape.points[point_index])
             self._point_move_index = point_index
@@ -1337,7 +1460,8 @@ class DrawingArea(QWidget):
             shape.selected = False
 
         for shape in self.shapes:
-            if shape.type == ShapeType.BOX:
+            # Standard 2-point boxes use resize handles
+            if shape.type == ShapeType.BOX and len(shape.points) == 2:
                 handle = self._get_resize_handle(shape, pos)
                 if handle:
                     self.resize_handle = (shape, handle)
@@ -1347,7 +1471,9 @@ class DrawingArea(QWidget):
                     self.selected_shape = shape
                     self.shape_selected.emit(shape)
                     return
-            elif shape.type == ShapeType.POLYGON:
+
+            # Polygons and 4-point boxes (rotated) use direct point manipulation
+            if shape.type == ShapeType.POLYGON or (shape.type == ShapeType.BOX and len(shape.points) > 2):
                 for i, point in enumerate(shape.points):
                     if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
                         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -1416,6 +1542,384 @@ class DrawingArea(QWidget):
         elif self.moving_shape:
             self._move_shape(pos)
 
+    # === Transform Tool Methods ===
+
+    def _handle_transform_click(self, pos: QPointF, event: QMouseEvent) -> None:
+        """Handle click in transform mode."""
+        import math
+
+        # If transform is active, check if clicking on a handle
+        if self._transform_active and self._transform_bounds:
+            handle_size = 12 / self.scale_factor
+
+            # Check rotation handle
+            if self._transform_rotation_handle:
+                if (pos - self._transform_rotation_handle).manhattanLength() < handle_size:
+                    self._transform_drag_type = "rotate"
+                    self._transform_drag_start = pos
+                    # Calculate starting angle
+                    center = self._transform_center
+                    self._transform_start_angle = math.atan2(
+                        pos.y() - center.y(),
+                        pos.x() - center.x()
+                    )
+                    return
+
+            # Check scale handles (corners)
+            bounds = self._transform_bounds
+            corners = {
+                "topleft": bounds.topLeft(),
+                "topright": bounds.topRight(),
+                "bottomleft": bounds.bottomLeft(),
+                "bottomright": bounds.bottomRight()
+            }
+
+            for name, corner in corners.items():
+                if (pos - corner).manhattanLength() < handle_size:
+                    self._transform_drag_type = "scale"
+                    self._transform_drag_corner = name
+                    self._transform_drag_start = pos
+                    return
+
+            # Clicking elsewhere while transform is active - check if on shape/points
+            # If clicking on the shape being transformed, do nothing
+            if self._transform_bounds.contains(pos):
+                return
+
+        # Reset previous selection unless Ctrl is held
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.selected_points = []
+            if self.selected_shape:
+                self.selected_shape.selected = False
+            self.selected_shape = None
+
+        # Check for shape or point selection
+        for shape in self.shapes:
+            # Check points first (for polygon point selection)
+            if shape.type == ShapeType.POLYGON:
+                for i, point in enumerate(shape.points):
+                    if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
+                        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                            if (shape, i) in self.selected_points:
+                                self.selected_points.remove((shape, i))
+                            else:
+                                self.selected_points.append((shape, i))
+                        else:
+                            self.selected_points = [(shape, i)]
+                        self._activate_transform_for_points()
+                        return
+
+            # Check if clicking inside shape
+            if self._shape_contains_point(shape, pos):
+                shape.selected = True
+                self.selected_shape = shape
+                self.shape_selected.emit(shape)
+                self._activate_transform_for_shape(shape)
+                return
+
+        # Clicked on empty space - deactivate transform
+        self._transform_active = False
+        self._transform_bounds = None
+        self._transform_center = None
+        self._transform_rotation_handle = None
+        self.shape_selected.emit(None)
+
+    def _handle_transform_move(self, pos: QPointF) -> None:
+        """Handle mouse move in transform mode."""
+        import math
+
+        if not self._transform_drag_type or not self._transform_drag_start:
+            return
+
+        center = self._transform_center
+        if not center:
+            return
+
+        if self._transform_drag_type == "rotate":
+            # Calculate rotation angle
+            current_angle = math.atan2(
+                pos.y() - center.y(),
+                pos.x() - center.x()
+            )
+            rotation = current_angle - self._transform_start_angle
+
+            # Apply rotation to shape or selected points
+            if self.selected_shape and self._transform_shape_start_points:
+                self._apply_rotation_to_shape(rotation)
+            elif self.selected_points and self._transform_start_points:
+                self._apply_rotation_to_points(rotation)
+
+        elif self._transform_drag_type == "scale":
+            # Calculate scale factor based on distance from center
+            start_dist = math.sqrt(
+                (self._transform_drag_start.x() - center.x()) ** 2 +
+                (self._transform_drag_start.y() - center.y()) ** 2
+            )
+            current_dist = math.sqrt(
+                (pos.x() - center.x()) ** 2 +
+                (pos.y() - center.y()) ** 2
+            )
+
+            if start_dist > 0:
+                scale = current_dist / start_dist
+                # Apply scale to shape or selected points
+                if self.selected_shape and self._transform_shape_start_points:
+                    self._apply_scale_to_shape(scale)
+                elif self.selected_points and self._transform_start_points:
+                    self._apply_scale_to_points(scale)
+
+        # Update transform bounds (only for scale, not rotation)
+        # During rotation, keep the center fixed to prevent spiraling
+        if self._transform_drag_type == "scale":
+            self._update_transform_bounds()
+
+    def _handle_transform_release(self, pos: QPointF) -> None:
+        """Handle mouse release in transform mode - create undo command."""
+        if self._transform_drag_type:
+            transform_type = self._transform_drag_type
+
+            # Create undo command for shape transformation
+            if self.selected_shape and self._transform_shape_start_points:
+                old_points = self._transform_shape_start_points
+                new_points = [QPointF(p) for p in self.selected_shape.points]
+
+                # Only create command if points actually changed
+                if old_points != new_points:
+                    cmd = TransformShapeCommand(
+                        self.selected_shape,
+                        old_points,
+                        new_points,
+                        transform_type,
+                        self._on_undo_redo_change
+                    )
+                    self.undo_manager._undo_stack.append(cmd)
+                    self.undo_manager._redo_stack.clear()
+                    self.undo_manager.state_changed.emit()
+
+            # Create undo command for point transformation
+            elif self.selected_points and self._transform_start_points:
+                point_changes = []
+                for shape, idx, old_pos in self._transform_start_points:
+                    new_pos = QPointF(shape.points[idx])
+                    if old_pos != new_pos:
+                        point_changes.append((shape, idx, old_pos, new_pos))
+
+                if point_changes:
+                    cmd = TransformPointsCommand(
+                        point_changes,
+                        transform_type,
+                        self._on_undo_redo_change
+                    )
+                    self.undo_manager._undo_stack.append(cmd)
+                    self.undo_manager._redo_stack.clear()
+                    self.undo_manager.state_changed.emit()
+
+        # Reset drag state but keep transform active
+        self._transform_drag_type = None
+        self._transform_drag_corner = None
+        self._transform_drag_start = None
+
+        # Update start points for next transform operation
+        if self.selected_shape:
+            self._transform_shape_start_points = [QPointF(p) for p in self.selected_shape.points]
+        elif self.selected_points:
+            self._transform_start_points = [
+                (shape, idx, QPointF(shape.points[idx]))
+                for shape, idx in self.selected_points
+            ]
+
+        # Update bounds after transform completes (especially important for rotation)
+        self._update_transform_bounds()
+
+    def _show_box_rotation_warning(self) -> bool:
+        """
+        Show a warning dialog about box rotation converting to polygon.
+
+        Returns:
+            True if user wants to proceed, False to cancel.
+        """
+        if not self.config_manager:
+            return True
+
+        config = self.config_manager.config
+        if not config.warn_box_rotation:
+            return True
+
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setWindowTitle("Box Rotation")
+        msg_box.setText("Rotating a box converts it to a 4-point polygon.")
+        msg_box.setInformativeText(
+            "Most annotation formats (YOLO, CoreML, etc.) store boxes as axis-aligned "
+            "rectangles. A rotated box cannot be saved as a standard box and will be "
+            "exported as a polygon instead.\n\n"
+            "Do you want to continue?"
+        )
+        msg_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+        # Add "Don't show again" checkbox
+        dont_show_checkbox = QCheckBox("Don't show this warning again")
+        msg_box.setCheckBox(dont_show_checkbox)
+
+        result = msg_box.exec()
+
+        # Save preference if checkbox was checked
+        if dont_show_checkbox.isChecked():
+            self.config_manager.update(warn_box_rotation=False)
+
+        return result == QMessageBox.StandardButton.Yes
+
+    def _activate_transform_for_shape(self, shape: Shape) -> None:
+        """Activate transform mode for a shape."""
+        self._transform_active = True
+
+        # Expand 2-point boxes to 4 corners for proper rotation support
+        # A 2-point box can only represent axis-aligned rectangles,
+        # but 4 corners can represent rotated rectangles
+        if shape.type == ShapeType.BOX and len(shape.points) == 2:
+            # Show warning to user about box conversion
+            if not self._show_box_rotation_warning():
+                self._transform_active = False
+                return
+
+            p1, p2 = shape.points[0], shape.points[1]
+            # Expand to 4 corners: top-left, top-right, bottom-right, bottom-left
+            shape.points = [
+                QPointF(min(p1.x(), p2.x()), min(p1.y(), p2.y())),  # top-left
+                QPointF(max(p1.x(), p2.x()), min(p1.y(), p2.y())),  # top-right
+                QPointF(max(p1.x(), p2.x()), max(p1.y(), p2.y())),  # bottom-right
+                QPointF(min(p1.x(), p2.x()), max(p1.y(), p2.y())),  # bottom-left
+            ]
+
+        self._transform_shape_start_points = [QPointF(p) for p in shape.points]
+        self._transform_start_points = None
+        self._update_transform_bounds()
+
+    def _activate_transform_for_points(self) -> None:
+        """Activate transform mode for selected points."""
+        if not self.selected_points:
+            return
+
+        self._transform_active = True
+        self._transform_start_points = [
+            (shape, idx, QPointF(shape.points[idx]))
+            for shape, idx in self.selected_points
+        ]
+        self._transform_shape_start_points = None
+        self._update_transform_bounds()
+
+    def _update_transform_bounds(self) -> None:
+        """Update the transform bounding box and handles."""
+        points = []
+
+        if self.selected_shape:
+            points = self.selected_shape.points
+        elif self.selected_points:
+            points = [shape.points[idx] for shape, idx in self.selected_points]
+
+        if not points:
+            self._transform_bounds = None
+            self._transform_center = None
+            self._transform_rotation_handle = None
+            return
+
+        # Calculate bounding rect
+        xs = [p.x() for p in points]
+        ys = [p.y() for p in points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        self._transform_bounds = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        self._transform_center = self._transform_bounds.center()
+
+        # Position rotation handle above center of top edge
+        handle_offset = 30 / self.scale_factor
+        self._transform_rotation_handle = QPointF(
+            self._transform_bounds.center().x(),
+            self._transform_bounds.top() - handle_offset
+        )
+
+    def _apply_rotation_to_shape(self, angle: float) -> None:
+        """Apply rotation to the selected shape around its center."""
+        import math
+
+        if not self.selected_shape or not self._transform_shape_start_points:
+            return
+
+        center = self._transform_center
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+
+        for i, start_point in enumerate(self._transform_shape_start_points):
+            # Translate to origin
+            x = start_point.x() - center.x()
+            y = start_point.y() - center.y()
+
+            # Rotate
+            new_x = x * cos_a - y * sin_a
+            new_y = x * sin_a + y * cos_a
+
+            # Translate back
+            self.selected_shape.points[i] = QPointF(
+                new_x + center.x(),
+                new_y + center.y()
+            )
+
+    def _apply_rotation_to_points(self, angle: float) -> None:
+        """Apply rotation to selected points around their center."""
+        import math
+
+        if not self._transform_start_points:
+            return
+
+        center = self._transform_center
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+
+        for shape, idx, start_point in self._transform_start_points:
+            # Translate to origin
+            x = start_point.x() - center.x()
+            y = start_point.y() - center.y()
+
+            # Rotate
+            new_x = x * cos_a - y * sin_a
+            new_y = x * sin_a + y * cos_a
+
+            # Translate back
+            shape.points[idx] = QPointF(
+                new_x + center.x(),
+                new_y + center.y()
+            )
+
+    def _apply_scale_to_shape(self, scale: float) -> None:
+        """Apply scale to the selected shape from its center."""
+        if not self.selected_shape or not self._transform_shape_start_points:
+            return
+
+        center = self._transform_center
+
+        for i, start_point in enumerate(self._transform_shape_start_points):
+            # Scale from center
+            x = (start_point.x() - center.x()) * scale + center.x()
+            y = (start_point.y() - center.y()) * scale + center.y()
+            self.selected_shape.points[i] = QPointF(x, y)
+
+    def _apply_scale_to_points(self, scale: float) -> None:
+        """Apply scale to selected points from their center."""
+        if not self._transform_start_points:
+            return
+
+        center = self._transform_center
+
+        for shape, idx, start_point in self._transform_start_points:
+            # Scale from center
+            x = (start_point.x() - center.x()) * scale + center.x()
+            y = (start_point.y() - center.y()) * scale + center.y()
+            shape.points[idx] = QPointF(x, y)
+
     def _handle_pan(self, pos: QPointF) -> None:
         """Handle panning movement."""
         delta = pos.toPoint() - self.pan_start
@@ -1459,7 +1963,10 @@ class DrawingArea(QWidget):
     # === Shape Manipulation Methods ===
 
     def _get_resize_handle(self, shape: Shape, pos: QPointF) -> Optional[str]:
-        """Get the resize handle name at position."""
+        """Get the resize handle name at position (only for 2-point boxes)."""
+        # 4-point boxes (rotated) should be treated like polygons, not resizable boxes
+        if len(shape.points) != 2:
+            return None
         rect = QRectF(shape.points[0], shape.points[1]).normalized()
         handles = [
             ("topleft", rect.topLeft()),
@@ -1561,10 +2068,12 @@ class DrawingArea(QWidget):
 
     def _shape_contains_point(self, shape: Shape, point: QPointF) -> bool:
         """Check if a point is inside a shape."""
-        if shape.type == ShapeType.BOX:
+        if shape.type == ShapeType.BOX and len(shape.points) == 2:
+            # Standard 2-point box - use rect containment
             rect = QRectF(shape.points[0], shape.points[1]).normalized()
             return rect.contains(point)
-        elif shape.type == ShapeType.POLYGON:
+        elif shape.type == ShapeType.POLYGON or (shape.type == ShapeType.BOX and len(shape.points) > 2):
+            # Polygons and 4-point boxes (rotated) - use polygon path
             path = QPainterPath()
             path.addPolygon(QPolygonF(shape.points))
             return path.contains(point)
@@ -1577,7 +2086,8 @@ class DrawingArea(QWidget):
         self.hover_shape = None
 
         for shape in self.shapes:
-            if shape.type == ShapeType.POLYGON:
+            # Polygons and 4-point boxes (rotated) have similar hover behavior
+            if shape.type == ShapeType.POLYGON or (shape.type == ShapeType.BOX and len(shape.points) > 2):
                 # Check points
                 for i, point in enumerate(shape.points):
                     if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
@@ -1594,17 +2104,18 @@ class DrawingArea(QWidget):
                         self.hover_shape = shape
                         return
 
-            elif shape.type == ShapeType.BOX:
-                # Check corners
+            elif shape.type == ShapeType.BOX and len(shape.points) == 2:
+                # Standard 2-point boxes - check corners only
                 for i, point in enumerate(shape.points):
                     if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
                         self.hover_point = (shape, i)
                         self.hover_shape = shape
                         return
 
-                if self._shape_contains_point(shape, pos):
-                    self.hover_shape = shape
-                    return
+            # Check if point is inside shape (for all shape types)
+            if self._shape_contains_point(shape, pos):
+                self.hover_shape = shape
+                return
 
     def _point_to_line_distance(
         self,

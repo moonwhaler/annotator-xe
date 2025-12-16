@@ -180,6 +180,7 @@ class MainWindow(QMainWindow):
         self.image_scroll_area = QScrollArea()
         self.image_label = DrawingArea()
         self.image_label.set_scroll_area(self.image_scroll_area)
+        self.image_label.config_manager = self.config_manager
         self.image_label.line_thickness = self.config.line_thickness
         self.image_label.font_size = self.config.font_size
         self.image_label.auto_select_on_point_click = self.config.auto_select_on_point_click
@@ -501,6 +502,11 @@ class MainWindow(QMainWindow):
         polygon_action.triggered.connect(lambda: self._set_drawing_tool("polygon"))
         drawing_tools.addAction(polygon_action)
 
+        transform_action = QAction(self._create_icon("transform"), "Transform", self)
+        transform_action.setCheckable(True)
+        transform_action.triggered.connect(lambda: self._set_drawing_tool("transform"))
+        drawing_tools.addAction(transform_action)
+
         # Save
         self.toolbar_save_action = QAction(self._create_icon("save"), "Save", self)
         self.toolbar_save_action.triggered.connect(self._save_annotations)
@@ -656,6 +662,7 @@ class MainWindow(QMainWindow):
             "select": "↖",
             "box": "▢",
             "polygon": "⬡",
+            "transform": "⟲",
             "save": "💾",
             "model": "🤖",
             "detect": "🔍",

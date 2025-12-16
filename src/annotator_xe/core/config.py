@@ -44,6 +44,7 @@ class AppConfig:
     max_recent_paths: int = 10  # Number of recent paths to remember (0-20, 0 = disabled)
     recent_paths: list[str] = field(default_factory=list)  # List of recently opened paths
     max_history_entries: int = 100  # Maximum undo/redo history entries (10-1000)
+    warn_box_rotation: bool = True  # Show warning when box is converted for rotation
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -69,6 +70,7 @@ class AppConfig:
             "maxRecentPaths": self.max_recent_paths,
             "recentPaths": self.recent_paths,
             "maxHistoryEntries": self.max_history_entries,
+            "warnBoxRotation": self.warn_box_rotation,
         }
 
     @classmethod
@@ -96,6 +98,7 @@ class AppConfig:
             max_recent_paths=data.get("maxRecentPaths", 10),
             recent_paths=data.get("recentPaths", []),
             max_history_entries=data.get("maxHistoryEntries", 100),
+            warn_box_rotation=data.get("warnBoxRotation", True),
         )
 
 

@@ -254,6 +254,16 @@ class YOLOAnnotationWriter:
             if len(shape.points) < 2:
                 return None
 
+            # Multi-point boxes (rotated/edited) must be saved as polygons
+            # since YOLO box format only supports axis-aligned rectangles
+            if len(shape.points) > 2:
+                coords = [
+                    f"{p.x() / img_width} {p.y() / img_height}"
+                    for p in shape.points
+                ]
+                return f"{class_id} {' '.join(coords)}"
+
+            # Standard 2-point axis-aligned box
             x1, y1 = shape.points[0].x(), shape.points[0].y()
             x2, y2 = shape.points[1].x(), shape.points[1].y()
 

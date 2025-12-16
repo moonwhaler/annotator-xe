@@ -361,7 +361,8 @@ class COCOAnnotationFormat(AnnotationFormat):
                         "iscrowd": 0
                     }
 
-                    if shape.type == ShapeType.BOX and len(shape.points) >= 2:
+                    if shape.type == ShapeType.BOX and len(shape.points) == 2:
+                        # Standard 2-point axis-aligned box
                         x1 = min(shape.points[0].x(), shape.points[1].x())
                         y1 = min(shape.points[0].y(), shape.points[1].y())
                         x2 = max(shape.points[0].x(), shape.points[1].x())
@@ -373,7 +374,9 @@ class COCOAnnotationFormat(AnnotationFormat):
                         ann_entry["area"] = w * h
                         ann_entry["segmentation"] = []
 
-                    elif shape.type == ShapeType.POLYGON and len(shape.points) >= 3:
+                    elif (shape.type == ShapeType.BOX and len(shape.points) > 2) or \
+                         (shape.type == ShapeType.POLYGON and len(shape.points) >= 3):
+                        # 4-point boxes (rotated) and polygons: save as segmentation
                         # Convert polygon to segmentation format
                         # Exclude closing point if it duplicates the first
                         points = shape.points
