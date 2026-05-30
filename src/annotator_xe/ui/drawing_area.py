@@ -400,6 +400,8 @@ class GPURenderBackend(RenderBackendMixin):
         self._state: Optional[RenderState] = None
         self._texture_id: int = 0
         self._texture_needs_update = True
+        # Max GL framebuffer dimension (device px); 0 until queried in initializeGL.
+        self._max_texture_size: int = 0
 
     @property
     def widget(self) -> QWidget:
@@ -455,6 +457,23 @@ if _OPENGL_AVAILABLE:
             gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
             self._gl_initialized = True
 
+            # Query the GPU's maximum framebuffer size. The DrawingArea uses this
+            # to fall back to CPU rendering before a zoom level overflows the GPU.
+            # As a hard safety net, also cap this widget's size (logical px, so
+            # widget * dpr stays within the limit) so Qt can never try to allocate
+            # an oversized framebuffer and crash, regardless of layout resizing.
+            try:
+                max_vp = gl.glGetIntegerv(gl.GL_MAX_VIEWPORT_DIMS)
+                max_rb = gl.glGetIntegerv(gl.GL_MAX_RENDERBUFFER_SIZE)
+                limit = min(int(max_vp[0]), int(max_vp[1]), int(max_rb))
+                if limit > 0 and self._backend is not None:
+                    self._backend._max_texture_size = limit
+                    dpr = self.devicePixelRatioF() or 1.0
+                    cap = max(1, int(limit / dpr))
+                    self.setMaximumSize(cap, cap)
+            except Exception as e:  # pragma: no cover - driver-dependent
+                logger.warning(f"Could not query GL framebuffer limits: {e}")
+
         def resizeGL(self, width: int, height: int) -> None:
             """Handle resize.
 
@@ -469,6 +488,13 @@ if _OPENGL_AVAILABLE:
             dpr = self.devicePixelRatioF()
             dev_w = int(self.width() * dpr)
             dev_h = int(self.height() * dpr)
+            # Defensive clamp: passing a viewport larger than the GL limit raises
+            # GL_INVALID_VALUE and aborts. The DrawingArea normally switches to CPU
+            # before reaching this, but clamp here too against transient resizes.
+            limit = self._backend._max_texture_size if self._backend else 0
+            if limit:
+                dev_w = min(dev_w, limit)
+                dev_h = min(dev_h, limit)
             gl.glViewport(0, 0, dev_w, dev_h)
             gl.glMatrixMode(gl.GL_PROJECTION)
             gl.glLoadIdentity()
@@ -530,6 +556,11 @@ if _OPENGL_AVAILABLE:
             dpr = self.devicePixelRatioF()
             w = self.width() * dpr
             h = self.height() * dpr
+            # Keep in sync with the clamped viewport (see resizeGL).
+            limit = self._backend._max_texture_size if self._backend else 0
+            if limit:
+                w = min(w, limit)
+                h = min(h, limit)
 
             gl.glBegin(gl.GL_QUADS)
             gl.glTexCoord2f(0, 1); gl.glVertex2f(0, 0)
@@ -621,7 +652,8 @@ class DrawingArea(QWidget):
         self._cpu_backend = CPURenderBackend(self)
         self._gpu_backend: Optional[GPURenderBackend] = None
         self._current_backend = self._cpu_backend
-        self._gpu_enabled = False
+        self._gpu_enabled = False  # whether GPU is currently active
+        self._gpu_preferred = False  # user's setting; actual use also depends on zoom
 
         # Layout for render backends
         self._layout = QStackedLayout(self)
@@ -744,19 +776,51 @@ class DrawingArea(QWidget):
 
     def set_gpu_acceleration(self, enabled: bool) -> None:
         """
-        Enable or disable GPU-accelerated rendering.
+        Set the user's GPU-accelerated rendering preference.
+
+        The backend actually in use also depends on whether the current zoom
+        level fits within the GPU's maximum framebuffer size: very high zoom on
+        large images transparently falls back to CPU rendering (which has no
+        such limit) and switches back to GPU when zoomed out again. See
+        _apply_backend / _gpu_fits_current_scale.
 
         Args:
-            enabled: True to use GPU rendering, False for CPU rendering
+            enabled: True to prefer GPU rendering, False for CPU rendering
         """
-        if enabled == self._gpu_enabled:
-            return
-
         if enabled and not is_opengl_available():
             logger.warning("GPU acceleration requested but OpenGL is not available")
-            return
+            enabled = False
 
-        self._gpu_enabled = enabled
+        self._gpu_preferred = enabled
+        self._apply_backend()
+
+    def _gpu_fits_current_scale(self) -> bool:
+        """Whether the image at the current zoom fits the GPU's max framebuffer.
+
+        A QOpenGLWidget allocates a framebuffer sized to widget * devicePixelRatio.
+        Past the GL maximum renderbuffer/viewport size (commonly 16384) allocation
+        fails and rendering aborts, so we render such zoom levels on the CPU instead.
+        """
+        limit = getattr(self._gpu_backend, "_max_texture_size", 0) if self._gpu_backend else 0
+        if not limit:
+            # Limit not known yet (GL context not initialized). This only happens
+            # before the first GPU paint, where the zoom is low, so assume it fits.
+            return True
+        if not self._pixmap or self._pixmap.isNull():
+            return True
+        dpr = self.devicePixelRatioF()
+        return (self._pixmap.width() * self.scale_factor * dpr <= limit
+                and self._pixmap.height() * self.scale_factor * dpr <= limit)
+
+    def _apply_backend(self) -> None:
+        """Activate GPU or CPU based on the user preference and zoom limits."""
+        want_gpu = self._gpu_preferred and self._gpu_fits_current_scale()
+        self._set_backend_active(want_gpu)
+
+    def _set_backend_active(self, enabled: bool) -> None:
+        """Switch the active render backend (no-op if already active)."""
+        if enabled == self._gpu_enabled:
+            return
 
         if enabled:
             # Create GPU backend if needed
@@ -774,15 +838,18 @@ class DrawingArea(QWidget):
                         self._layout.removeWidget(self._gpu_backend.widget)
                         self._gpu_backend = None
                     self._gpu_enabled = False
+                    self._gpu_preferred = False
                     return
 
             # Switch to GPU backend
+            self._gpu_enabled = True
             self._current_backend = self._gpu_backend
             self._layout.setCurrentWidget(self._gpu_backend.widget)
             self._gpu_backend.update_scaled_pixmap()
             logger.info("Switched to GPU rendering")
         else:
             # Switch to CPU backend
+            self._gpu_enabled = False
             self._current_backend = self._cpu_backend
             self._layout.setCurrentWidget(self._cpu_backend)
             self._cpu_backend.update_scaled_pixmap()
@@ -792,7 +859,7 @@ class DrawingArea(QWidget):
         self.update()
 
     def is_gpu_enabled(self) -> bool:
-        """Check if GPU acceleration is currently enabled."""
+        """Check if GPU acceleration is currently active."""
         return self._gpu_enabled
 
     # === Render State Synchronization ===
@@ -865,6 +932,12 @@ class DrawingArea(QWidget):
             factor: Scale factor (0.2 to 5.0)
         """
         self.scale_factor = max(min(factor, self.MAX_ZOOM), self.MIN_ZOOM)
+        # The new scale must reach the render state before the backend sizes
+        # its widget/image quad from it; mark dirty so the sync below is not
+        # skipped by the optimization. Otherwise the GPU image quad keeps the
+        # previous zoom's dimensions while shapes draw at the new zoom, which
+        # misaligns them on a single large zoom jump (e.g. clicking the slider).
+        self._mark_render_dirty()
         self._update_scaled_pixmap()
         self.update()
         self.zoom_changed.emit(self.scale_factor)
@@ -873,6 +946,10 @@ class DrawingArea(QWidget):
     def _update_scaled_pixmap(self) -> None:
         """Update the scaled pixmap based on current scale factor."""
         self._sync_render_state()
+
+        # Re-evaluate which backend to use: a zoom change may push the image
+        # past the GPU's max framebuffer size, in which case we fall back to CPU.
+        self._apply_backend()
 
         if self._gpu_enabled and self._gpu_backend:
             self._gpu_backend.update_scaled_pixmap()

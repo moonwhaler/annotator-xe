@@ -128,6 +128,12 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._setup_connections()
 
+        # Apply the persisted GPU acceleration preference at startup. Without
+        # this the setting only took effect after opening the settings dialog,
+        # so a saved gpuAcceleration: true was silently ignored on launch.
+        if self.config.gpu_acceleration:
+            self.image_label.set_gpu_acceleration(True)
+
         logger.info("MainWindow initialization complete")
 
     @property
