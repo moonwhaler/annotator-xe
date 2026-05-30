@@ -456,11 +456,23 @@ if _OPENGL_AVAILABLE:
             self._gl_initialized = True
 
         def resizeGL(self, width: int, height: int) -> None:
-            """Handle resize."""
-            gl.glViewport(0, 0, width, height)
+            """Handle resize.
+
+            The OpenGL framebuffer is sized in DEVICE pixels, while the
+            QPainter annotation overlay (paintEvent) draws in LOGICAL pixels.
+            On HiDPI/Retina displays these differ by devicePixelRatio. We set
+            up the viewport and projection in device pixels and draw the image
+            quad in the same units (see _draw_image) so the image and the
+            shapes share one coordinate system. Mixing the two makes shapes
+            drift off the image, worsening with zoom.
+            """
+            dpr = self.devicePixelRatioF()
+            dev_w = int(self.width() * dpr)
+            dev_h = int(self.height() * dpr)
+            gl.glViewport(0, 0, dev_w, dev_h)
             gl.glMatrixMode(gl.GL_PROJECTION)
             gl.glLoadIdentity()
-            gl.glOrtho(0, width, height, 0, -1, 1)
+            gl.glOrtho(0, dev_w, dev_h, 0, -1, 1)
             gl.glMatrixMode(gl.GL_MODELVIEW)
             gl.glLoadIdentity()
 
@@ -513,8 +525,11 @@ if _OPENGL_AVAILABLE:
             gl.glBindTexture(gl.GL_TEXTURE_2D, self._texture_id)
             gl.glColor4f(1.0, 1.0, 1.0, 1.0)
 
-            w = self.width()
-            h = self.height()
+            # Device pixels: must match the projection set in resizeGL so the
+            # image aligns with the dpr-aware QPainter shape overlay on Retina.
+            dpr = self.devicePixelRatioF()
+            w = self.width() * dpr
+            h = self.height() * dpr
 
             gl.glBegin(gl.GL_QUADS)
             gl.glTexCoord2f(0, 1); gl.glVertex2f(0, 0)
@@ -903,25 +918,22 @@ class DrawingArea(QWidget):
             new_scale = max(min(new_scale, self.MAX_ZOOM), self.MIN_ZOOM)
 
             if new_scale != self.scale_factor:
-                # Calculate relative position for zoom centering
-                relative_pos = QPointF(
-                    cursor_pos.x() / self.width() if self.width() > 0 else 0.5,
-                    cursor_pos.y() / self.height() if self.height() > 0 else 0.5
-                )
-
                 old_scale = self.scale_factor
+
+                h_bar = self.scroll_area.horizontalScrollBar() if self.scroll_area else None
+                v_bar = self.scroll_area.verticalScrollBar() if self.scroll_area else None
+                old_scroll_x = h_bar.value() if h_bar else 0
+                old_scroll_y = v_bar.value() if v_bar else 0
+
                 self.set_scale_factor(new_scale)
 
-                # Adjust scroll position to keep cursor point stable
+                # Keep the point under the cursor fixed on screen (see wheelEvent).
                 if self.scroll_area:
-                    scale_ratio = new_scale / old_scale
-                    viewport_size = self.scroll_area.viewport().size()
-
-                    new_scroll_x = int(cursor_pos.x() * scale_ratio - viewport_size.width() * relative_pos.x())
-                    new_scroll_y = int(cursor_pos.y() * scale_ratio - viewport_size.height() * relative_pos.y())
-
-                    self.scroll_area.horizontalScrollBar().setValue(new_scroll_x)
-                    self.scroll_area.verticalScrollBar().setValue(new_scroll_y)
+                    ratio = self.scale_factor / old_scale
+                    new_scroll_x = cursor_pos.x() * ratio - (cursor_pos.x() - old_scroll_x)
+                    new_scroll_y = cursor_pos.y() * ratio - (cursor_pos.y() - old_scroll_y)
+                    h_bar.setValue(int(round(new_scroll_x)))
+                    v_bar.setValue(int(round(new_scroll_y)))
 
             event.accept()
             return True
@@ -967,22 +979,26 @@ class DrawingArea(QWidget):
             delta = event.angleDelta().y()
             zoom_factor = self.ZOOM_FACTOR if delta > 0 else 1 / self.ZOOM_FACTOR
 
+            # cursor_pos is in content (widget) coordinates, before the zoom.
             cursor_pos = event.position()
-            relative_pos = QPointF(
-                cursor_pos.x() / self.width(),
-                cursor_pos.y() / self.height()
-            )
+            old_scale = self.scale_factor
 
-            new_scale = self.scale_factor * zoom_factor
-            self.set_scale_factor(new_scale)
+            h_bar = self.scroll_area.horizontalScrollBar() if self.scroll_area else None
+            v_bar = self.scroll_area.verticalScrollBar() if self.scroll_area else None
+            old_scroll_x = h_bar.value() if h_bar else 0
+            old_scroll_y = v_bar.value() if v_bar else 0
+
+            self.set_scale_factor(self.scale_factor * zoom_factor)
 
             if self.scroll_area:
-                viewport_size = self.scroll_area.viewport().size()
-                new_scroll_x = int(cursor_pos.x() * zoom_factor - viewport_size.width() * relative_pos.x())
-                new_scroll_y = int(cursor_pos.y() * zoom_factor - viewport_size.height() * relative_pos.y())
-
-                self.scroll_area.horizontalScrollBar().setValue(new_scroll_x)
-                self.scroll_area.verticalScrollBar().setValue(new_scroll_y)
+                # Keep the point under the cursor fixed on screen: its content
+                # coordinate scales by the (clamped) ratio, and we shift the
+                # scrollbars so its offset within the viewport is unchanged.
+                ratio = self.scale_factor / old_scale
+                new_scroll_x = cursor_pos.x() * ratio - (cursor_pos.x() - old_scroll_x)
+                new_scroll_y = cursor_pos.y() * ratio - (cursor_pos.y() - old_scroll_y)
+                h_bar.setValue(int(round(new_scroll_x)))
+                v_bar.setValue(int(round(new_scroll_y)))
 
             event.accept()
         else:
@@ -1535,7 +1551,7 @@ class DrawingArea(QWidget):
                 shape.selected = True
                 self.selected_shape = shape
                 self.shape_selected.emit(shape)
-                self.move_start_point = self._inverse_transform_pos(pos)
+                self.move_start_point = QPointF(pos)
                 # Capture starting points for undo
                 self._move_start_points = [QPointF(p) for p in shape.points]
                 return
@@ -1555,7 +1571,7 @@ class DrawingArea(QWidget):
                 self.selected_shape = shape
                 self.shape_selected.emit(shape)
                 self.moving_shape = True
-                self.move_start_point = self._inverse_transform_pos(pos)
+                self.move_start_point = QPointF(pos)
                 break
 
     def _handle_drawing_move(self, pos: QPointF) -> None:
@@ -2055,9 +2071,11 @@ class DrawingArea(QWidget):
     def _move_shape(self, pos: QPointF) -> None:
         """Move the entire selected shape."""
         if self.selected_shape and self.move_start_point != QPointF():
-            delta = pos - self._transform_pos(self.move_start_point)
+            # move_start_point and pos are both in image space, so the delta is
+            # zoom-independent and stays correct even if the zoom changes mid-drag.
+            delta = pos - self.move_start_point
             self.selected_shape.move_by(delta)
-            self.move_start_point = self._inverse_transform_pos(pos)
+            self.move_start_point = QPointF(pos)
             self.update()
 
     def _insert_point_to_polygon(self, pos: QPointF) -> None:
