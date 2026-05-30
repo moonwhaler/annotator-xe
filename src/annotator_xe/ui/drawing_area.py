@@ -126,17 +126,39 @@ class RenderBackendMixin:
         if shape.label:
             self._draw_label(painter, shape.label, shape.points[0], color, state)
 
-        # Draw points
+        # Draw points - batched by brush color to reduce QPainter state changes
+        normal_points = []
+        hover_points = []
+        moving_points = []
+
         for i, point in enumerate(shape.points):
             if state.hover_point and shape == state.hover_point[0] and i == state.hover_point[1]:
-                painter.setBrush(QColor(255, 0, 0, 128))
-                painter.drawEllipse(point, 5 / state.scale_factor, 5 / state.scale_factor)
+                hover_points.append(point)
             elif point == state.moving_point:
-                painter.setBrush(QColor(255, 0, 0))
-                painter.drawEllipse(point, 5 / state.scale_factor, 5 / state.scale_factor)
+                moving_points.append(point)
             else:
-                painter.setBrush(QColor(0, 255, 0))
-                painter.drawEllipse(point, 3 / state.scale_factor, 3 / state.scale_factor)
+                normal_points.append(point)
+
+        # Draw normal points (green, smaller)
+        if normal_points:
+            painter.setBrush(QColor(0, 255, 0))
+            radius = 3 / state.scale_factor
+            for point in normal_points:
+                painter.drawEllipse(point, radius, radius)
+
+        # Draw hover points (red semi-transparent, larger)
+        if hover_points:
+            painter.setBrush(QColor(255, 0, 0, 128))
+            radius = 5 / state.scale_factor
+            for point in hover_points:
+                painter.drawEllipse(point, radius, radius)
+
+        # Draw moving points (red opaque, larger)
+        if moving_points:
+            painter.setBrush(QColor(255, 0, 0))
+            radius = 5 / state.scale_factor
+            for point in moving_points:
+                painter.drawEllipse(point, radius, radius)
 
     def _draw_label(
         self,
@@ -580,6 +602,7 @@ class DrawingArea(QWidget):
 
         # Render state and backends
         self._render_state = RenderState()
+        self._render_dirty = True  # Dirty flag for render state sync optimization
         self._cpu_backend = CPURenderBackend(self)
         self._gpu_backend: Optional[GPURenderBackend] = None
         self._current_backend = self._cpu_backend
@@ -732,6 +755,9 @@ class DrawingArea(QWidget):
                     self._gpu_backend.widget.installEventFilter(self)
                 except Exception as e:
                     logger.error(f"Failed to create GPU backend: {e}")
+                    if self._gpu_backend is not None:
+                        self._layout.removeWidget(self._gpu_backend.widget)
+                        self._gpu_backend = None
                     self._gpu_enabled = False
                     return
 
@@ -756,8 +782,19 @@ class DrawingArea(QWidget):
 
     # === Render State Synchronization ===
 
+    def _mark_render_dirty(self) -> None:
+        """Mark render state as needing synchronization."""
+        self._render_dirty = True
+
     def _sync_render_state(self) -> None:
-        """Synchronize local state with render state object."""
+        """Synchronize local state with render state object.
+
+        Uses a dirty flag to skip synchronization when state hasn't changed.
+        """
+        if not self._render_dirty:
+            return
+        self._render_dirty = False
+
         self._render_state.shapes = self.shapes
         self._render_state.current_shape = self.current_shape
         self._render_state.selected_shape = self.selected_shape
@@ -989,18 +1026,26 @@ class DrawingArea(QWidget):
             self._handle_pan(pos)
             return
 
+        needs_update = False
+
         if self.drawing:
             self._handle_drawing_move(transformed_pos)
+            needs_update = True
         elif self.current_tool == "select":
             self._handle_select_move(transformed_pos)
+            needs_update = True
         elif self.current_tool == "polygon" and self.moving_point:
             # Handle dragging a newly inserted point
             self._move_polygon_point(transformed_pos)
+            needs_update = True
         elif self.current_tool == "transform":
             self._handle_transform_move(transformed_pos)
+            needs_update = True
 
-        self._update_hover(transformed_pos)
-        self.update()
+        hover_changed = self._update_hover(transformed_pos)
+
+        if needs_update or hover_changed:
+            self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Handle mouse release events."""
@@ -1035,10 +1080,7 @@ class DrawingArea(QWidget):
                         new_points,
                         self._on_undo_redo_change
                     )
-                # Add to undo stack without re-executing
-                self.undo_manager._undo_stack.append(cmd)
-                self.undo_manager._redo_stack.clear()
-                self.undo_manager.state_changed.emit()
+                self.undo_manager.push_executed(cmd)
 
         if self.selected_shape and self._point_move_start is not None and self._point_move_index is not None:
             new_pos = self.selected_shape.points[self._point_move_index]
@@ -1051,13 +1093,10 @@ class DrawingArea(QWidget):
                     QPointF(new_pos),
                     self._on_undo_redo_change
                 )
-                self.undo_manager._undo_stack.append(cmd)
-                self.undo_manager._redo_stack.clear()
-                self.undo_manager.state_changed.emit()
+                self.undo_manager.push_executed(cmd)
 
         # Handle multi-point move undo
         if self._multi_point_move_starts:
-            commands_added = False
             for shape, idx, start_pos in self._multi_point_move_starts:
                 new_pos = shape.points[idx]
                 if start_pos != new_pos:
@@ -1068,11 +1107,7 @@ class DrawingArea(QWidget):
                         QPointF(new_pos),
                         self._on_undo_redo_change
                     )
-                    self.undo_manager._undo_stack.append(cmd)
-                    commands_added = True
-            if commands_added:
-                self.undo_manager._redo_stack.clear()
-                self.undo_manager.state_changed.emit()
+                    self.undo_manager.push_executed(cmd)
 
         # Handle selection rectangle completion
         if self._drawing_selection_rect and self._selection_rect_start and self._selection_rect_end:
@@ -1188,6 +1223,7 @@ class DrawingArea(QWidget):
 
     def update(self) -> None:
         """Update the widget - syncs state and triggers backend repaint."""
+        self._mark_render_dirty()
         self._sync_render_state()
         if self._gpu_enabled and self._gpu_backend:
             self._gpu_backend.update()
@@ -1692,9 +1728,7 @@ class DrawingArea(QWidget):
                         transform_type,
                         self._on_undo_redo_change
                     )
-                    self.undo_manager._undo_stack.append(cmd)
-                    self.undo_manager._redo_stack.clear()
-                    self.undo_manager.state_changed.emit()
+                    self.undo_manager.push_executed(cmd)
 
             # Create undo command for point transformation
             elif self.selected_points and self._transform_start_points:
@@ -1710,9 +1744,7 @@ class DrawingArea(QWidget):
                         transform_type,
                         self._on_undo_redo_change
                     )
-                    self.undo_manager._undo_stack.append(cmd)
-                    self.undo_manager._redo_stack.clear()
-                    self.undo_manager.state_changed.emit()
+                    self.undo_manager.push_executed(cmd)
 
         # Reset drag state but keep transform active
         self._transform_drag_type = None
@@ -2079,11 +2111,24 @@ class DrawingArea(QWidget):
             return path.contains(point)
         return False
 
-    def _update_hover(self, pos: QPointF) -> None:
-        """Update hover state for shapes and points."""
+    def _update_hover(self, pos: QPointF) -> bool:
+        """Update hover state for shapes and points.
+
+        Returns:
+            True if the hover state actually changed, False otherwise.
+        """
+        old_hover_point = self.hover_point
+        old_hover_edge = self.hover_edge
+        old_hover_shape = self.hover_shape
+
         self.hover_point = None
         self.hover_edge = None
         self.hover_shape = None
+
+        def _hover_changed() -> bool:
+            return (self.hover_point != old_hover_point or
+                    self.hover_edge != old_hover_edge or
+                    self.hover_shape != old_hover_shape)
 
         for shape in self.shapes:
             # Polygons and 4-point boxes (rotated) have similar hover behavior
@@ -2093,7 +2138,7 @@ class DrawingArea(QWidget):
                     if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
                         self.hover_point = (shape, i)
                         self.hover_shape = shape
-                        return
+                        return _hover_changed()
 
                 # Check edges
                 for i in range(len(shape.points)):
@@ -2102,7 +2147,7 @@ class DrawingArea(QWidget):
                     if self._point_to_line_distance(pos, p1, p2) < self.EDGE_DETECTION_RADIUS / self.scale_factor:
                         self.hover_edge = (shape, i)
                         self.hover_shape = shape
-                        return
+                        return _hover_changed()
 
             elif shape.type == ShapeType.BOX and len(shape.points) == 2:
                 # Standard 2-point boxes - check corners only
@@ -2110,12 +2155,14 @@ class DrawingArea(QWidget):
                     if (point - pos).manhattanLength() < self.POINT_DETECTION_RADIUS / self.scale_factor:
                         self.hover_point = (shape, i)
                         self.hover_shape = shape
-                        return
+                        return _hover_changed()
 
             # Check if point is inside shape (for all shape types)
             if self._shape_contains_point(shape, pos):
                 self.hover_shape = shape
-                return
+                return _hover_changed()
+
+        return _hover_changed()
 
     def _point_to_line_distance(
         self,

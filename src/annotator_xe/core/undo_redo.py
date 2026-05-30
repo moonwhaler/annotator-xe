@@ -402,6 +402,27 @@ class UndoRedoManager(QObject):
         self._redo_stack: List[Command] = []
         self._max_history = max_history
 
+    def push_executed(self, command: Command) -> None:
+        """
+        Add a command that has already been executed to the undo stack.
+
+        Use this instead of directly accessing _undo_stack/_redo_stack
+        when a command has already been applied and only needs to be
+        tracked for undo/redo purposes.
+
+        Args:
+            command: The already-executed command to track
+        """
+        self._undo_stack.append(command)
+        self._redo_stack.clear()
+
+        # Limit history size
+        while len(self._undo_stack) > self._max_history:
+            self._undo_stack.pop(0)
+
+        logger.debug(f"Pushed pre-executed: {command.description}")
+        self.state_changed.emit()
+
     def execute(self, command: Command) -> None:
         """
         Execute a command and add it to the undo stack.

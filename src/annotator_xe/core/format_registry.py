@@ -181,7 +181,8 @@ class FormatRegistry:
                         # Must have at least 'images' or 'annotations' key
                         if "images" in data or "annotations" in data or "categories" in data:
                             return True
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Could not parse {filename} as COCO: {e}")
                     continue
         return False
 
@@ -202,7 +203,8 @@ class FormatRegistry:
                             return True
                         if isinstance(data[0], dict) and "image" in data[0]:
                             return True
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Could not parse {filename} as CreateML: {e}")
                     continue
 
         # Also check for annotations.json that might be CreateML format
@@ -215,8 +217,8 @@ class FormatRegistry:
                 if isinstance(data, list) and len(data) > 0:
                     if isinstance(data[0], dict) and "image" in data[0]:
                         return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not parse annotations.json as CreateML: {e}")
 
         return False
 
@@ -239,7 +241,8 @@ class FormatRegistry:
                         # Pascal VOC has 'annotation' root with 'object' children
                         if root.tag == "annotation":
                             return True
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Could not parse {xml_path.name} as Pascal VOC: {e}")
                         continue
         return False
 
@@ -268,7 +271,8 @@ class FormatRegistry:
                                     int(parts[0])  # class_id is integer
                                     float(parts[1])  # coords are floats
                                     return True
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Could not parse {txt_path.name} as YOLO: {e}")
                         continue
         return False
 

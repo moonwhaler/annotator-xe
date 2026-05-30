@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QPointF
 
-from .annotation_format import AnnotationFormat
+from .annotation_format import AnnotationFormat, PerImageAnnotationFormat
 from .models import Shape, ShapeType
 
 logger = logging.getLogger(__name__)
@@ -335,7 +335,7 @@ def has_annotation(image_path: Path) -> bool:
         return False
 
 
-class YOLOAnnotationFormat(AnnotationFormat):
+class YOLOAnnotationFormat(PerImageAnnotationFormat):
     """
     YOLO annotation format handler implementing the AnnotationFormat interface.
 

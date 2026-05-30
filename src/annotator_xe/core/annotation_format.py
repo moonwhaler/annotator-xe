@@ -202,3 +202,31 @@ class AnnotationFormat(ABC):
             Dictionary mapping class names to IDs
         """
         return self.classes.copy()
+
+
+class PerImageAnnotationFormat(AnnotationFormat):
+    """
+    Base class for annotation formats that use one file per image.
+
+    Per-image formats (YOLO, Pascal VOC) store annotations in individual
+    files alongside each image. The read_image/write_image methods are
+    the primary interface for these formats.
+    """
+
+    @property
+    def is_per_image(self) -> bool:
+        return True
+
+
+class DatasetAnnotationFormat(AnnotationFormat):
+    """
+    Base class for annotation formats that use a single file for the dataset.
+
+    Dataset formats (COCO, CreateML) store all annotations in a single
+    JSON file. The load_directory/save_directory methods are the primary
+    interface for these formats.
+    """
+
+    @property
+    def is_per_image(self) -> bool:
+        return False

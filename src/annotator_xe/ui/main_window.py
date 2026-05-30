@@ -646,14 +646,24 @@ class MainWindow(QMainWindow):
         # Install event filter to catch viewport resize events
         self.image_scroll_area.viewport().installEventFilter(self)
 
+    # Class-level icon cache to avoid recreating QPixmaps for the same icons
+    _icon_cache: dict = {}
+
     @staticmethod
     def _create_icon(name: str, size: int = 32) -> QIcon:
         """Create an icon from Unicode emoji/symbol.
+
+        Uses a class-level cache to avoid recreating icons that have
+        already been generated.
 
         Args:
             name: Icon identifier
             size: Icon size in pixels
         """
+        cache_key = (name, size)
+        if cache_key in MainWindow._icon_cache:
+            return MainWindow._icon_cache[cache_key]
+
         # Map icon names to Unicode symbols
         icons = {
             "folder": "📂",
@@ -689,7 +699,9 @@ class MainWindow(QMainWindow):
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, symbol)
         painter.end()
 
-        return QIcon(pixmap)
+        icon = QIcon(pixmap)
+        MainWindow._icon_cache[cache_key] = icon
+        return icon
 
     # === File Operations ===
 

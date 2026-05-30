@@ -39,12 +39,14 @@ classifiers = [
 dependencies = [
     "PyQt6>=6.5.0",
     "PyYAML>=6.0",
-    "torch>=2.0.0",
-    "ultralytics>=8.0.0",
     "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
+yolo = [
+    "torch>=2.0.0",
+    "ultralytics>=8.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-qt>=4.2.0",

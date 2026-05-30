@@ -6,12 +6,19 @@ import logging
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
-import torch
-
 from .models import Shape, ShapeType
 from PyQt6.QtCore import QPointF
 
 logger = logging.getLogger(__name__)
+
+
+def _torch_available() -> bool:
+    """Check whether torch is importable (it is an optional dependency)."""
+    try:
+        import torch  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 class YOLODetector:
@@ -29,6 +36,13 @@ class YOLODetector:
         Args:
             model_path: Path to the YOLO model file (.pt)
         """
+        if not _torch_available():
+            raise ImportError(
+                "torch is required for YOLO detection. "
+                "Install with: pip install 'annotator-xe[yolo]'"
+            )
+
+        import torch
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model: Optional[Any] = None
         self.model_path: Optional[str] = None
@@ -185,6 +199,7 @@ class YOLODetector:
         """Get information about the compute device."""
         if self.device == "cuda":
             try:
+                import torch
                 device_name = torch.cuda.get_device_name(0)
                 return f"CUDA: {device_name}"
             except Exception:

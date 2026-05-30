@@ -55,10 +55,17 @@ class Shape:
         return QColor.fromHsv(hue, 255, 255, 128)
 
     def close_polygon(self) -> None:
-        """Ensure the polygon is closed (first point equals last point)."""
-        if self.type == ShapeType.POLYGON and len(self.points) > 2:
-            if self.points[0] != self.points[-1]:
-                self.points.append(QPointF(self.points[0]))
+        """Ensure the polygon is closed (first point equals last point).
+
+        Requires at least 3 points to form a valid polygon.
+        """
+        if self.type != ShapeType.POLYGON:
+            return
+        if len(self.points) < 3:
+            logger.warning("Cannot close polygon: need at least 3 points, got %d", len(self.points))
+            return
+        if self.points[0] != self.points[-1]:
+            self.points.append(QPointF(self.points[0]))
 
     def remove_point(self, index: int) -> bool:
         """
@@ -156,6 +163,9 @@ class Shape:
         if self.type != ShapeType.BOX or len(self.points) < 2:
             raise ValueError("Shape must be a box with 2 points")
 
+        if img_width <= 0 or img_height <= 0:
+            raise ValueError(f"Invalid image dimensions: {img_width}x{img_height}")
+
         x1, y1 = self.points[0].x(), self.points[0].y()
         x2, y2 = self.points[1].x(), self.points[1].y()
 
@@ -163,6 +173,12 @@ class Shape:
         y_center = (y1 + y2) / (2 * img_height)
         width = abs(x2 - x1) / img_width
         height = abs(y2 - y1) / img_height
+
+        # Clamp to valid range [0, 1]
+        x_center = max(0.0, min(1.0, x_center))
+        y_center = max(0.0, min(1.0, y_center))
+        width = max(0.0, min(1.0, width))
+        height = max(0.0, min(1.0, height))
 
         return (x_center, y_center, width, height)
 
@@ -180,7 +196,16 @@ class Shape:
         if self.type != ShapeType.POLYGON:
             raise ValueError("Shape must be a polygon")
 
-        return [(p.x() / img_width, p.y() / img_height) for p in self.points]
+        if img_width <= 0 or img_height <= 0:
+            raise ValueError(f"Invalid image dimensions: {img_width}x{img_height}")
+
+        return [
+            (
+                max(0.0, min(1.0, p.x() / img_width)),
+                max(0.0, min(1.0, p.y() / img_height)),
+            )
+            for p in self.points
+        ]
 
     @classmethod
     def from_yolo_box(

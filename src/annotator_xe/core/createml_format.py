@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QPointF
 
-from .annotation_format import AnnotationFormat
+from .annotation_format import AnnotationFormat, DatasetAnnotationFormat
 from .models import Shape, ShapeType
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ CREATEML_FILE_NAMES = [
 ]
 
 
-class CreateMLAnnotationFormat(AnnotationFormat):
+class CreateMLAnnotationFormat(DatasetAnnotationFormat):
     """
     CreateML annotation format handler.
 

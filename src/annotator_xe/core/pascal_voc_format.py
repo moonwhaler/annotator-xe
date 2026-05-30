@@ -10,13 +10,13 @@ from xml.dom import minidom
 
 from PyQt6.QtCore import QPointF
 
-from .annotation_format import AnnotationFormat
+from .annotation_format import AnnotationFormat, PerImageAnnotationFormat
 from .models import Shape, ShapeType
 
 logger = logging.getLogger(__name__)
 
 
-class PascalVOCAnnotationFormat(AnnotationFormat):
+class PascalVOCAnnotationFormat(PerImageAnnotationFormat):
     """
     Pascal VOC annotation format handler.
 

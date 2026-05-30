@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QRectF, QSizeF, QPointF, pyqtSignal
+from PyQt6.QtCore import Qt, QRectF, QSizeF, QPointF, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QMouseEvent, QResizeEvent
 from PyQt6.QtWidgets import QLabel, QSizePolicy
 
@@ -49,6 +49,12 @@ class MiniatureView(QLabel):
 
         # Track the actual scaled image bounds within the widget
         self._scaled_image_rect = QRectF()
+
+        # Debounce timer for resize-triggered pixmap scaling
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(75)  # 75ms debounce
+        self._resize_timer.timeout.connect(self._update_scaled_pixmap)
 
     def setPixmap(self, pixmap: QPixmap) -> None:
         """
@@ -115,9 +121,9 @@ class MiniatureView(QLabel):
         super().setPixmap(scaled_pixmap)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
-        """Handle widget resize."""
+        """Handle widget resize with debounced pixmap scaling."""
         super().resizeEvent(event)
-        self._update_scaled_pixmap()
+        self._resize_timer.start()
 
     def paintEvent(self, event) -> None:
         """Paint the minimap with viewport rectangle."""

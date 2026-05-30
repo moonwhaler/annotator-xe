@@ -75,30 +75,41 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> AppConfig:
-        """Create config from dictionary."""
+        """Create config from dictionary.
+
+        Accepts both camelCase keys (legacy config files) and snake_case keys.
+        CamelCase is checked first for backwards compatibility with existing
+        user config files that were serialized via to_dict().
+        """
+        def _get(camel: str, snake: str, default: Any) -> Any:
+            """Get value from dict, trying camelCase first then snake_case."""
+            if camel in data:
+                return data[camel]
+            return data.get(snake, default)
+
         return cls(
-            default_directory=data.get("defaultDirectory", ""),
-            yolo_model_path=data.get("yoloModelPath", ""),
-            line_thickness=data.get("lineThickness", 2),
-            font_size=data.get("fontSize", 10),
+            default_directory=_get("defaultDirectory", "default_directory", ""),
+            yolo_model_path=_get("yoloModelPath", "yolo_model_path", ""),
+            line_thickness=_get("lineThickness", "line_thickness", 2),
+            font_size=_get("fontSize", "font_size", 10),
             autosave=data.get("autosave", False),
-            focus_on_select=data.get("focusOnSelect", True),
-            zoom_on_select=data.get("zoomOnSelect", False),
-            zoom_on_select_level=data.get("zoomOnSelectLevel", "fit"),
-            auto_select_on_point_click=data.get("autoSelectOnPointClick", True),
-            finish_drawing_key=data.get("finishDrawingKey", "Escape"),
-            delete_shape_key=data.get("deleteShapeKey", "Delete"),
-            thumbnail_size=data.get("thumbnailSize", 80),
-            thumbnail_cache_enabled=data.get("thumbnailCacheEnabled", True),
-            thumbnail_cache_max_mb=data.get("thumbnailCacheMaxMb", 500),
-            default_annotation_format=data.get("defaultAnnotationFormat", "yolo"),
-            auto_detect_format=data.get("autoDetectFormat", True),
-            gpu_acceleration=data.get("gpuAcceleration", False),
+            focus_on_select=_get("focusOnSelect", "focus_on_select", True),
+            zoom_on_select=_get("zoomOnSelect", "zoom_on_select", False),
+            zoom_on_select_level=_get("zoomOnSelectLevel", "zoom_on_select_level", "fit"),
+            auto_select_on_point_click=_get("autoSelectOnPointClick", "auto_select_on_point_click", True),
+            finish_drawing_key=_get("finishDrawingKey", "finish_drawing_key", "Escape"),
+            delete_shape_key=_get("deleteShapeKey", "delete_shape_key", "Delete"),
+            thumbnail_size=_get("thumbnailSize", "thumbnail_size", 80),
+            thumbnail_cache_enabled=_get("thumbnailCacheEnabled", "thumbnail_cache_enabled", True),
+            thumbnail_cache_max_mb=_get("thumbnailCacheMaxMb", "thumbnail_cache_max_mb", 500),
+            default_annotation_format=_get("defaultAnnotationFormat", "default_annotation_format", "yolo"),
+            auto_detect_format=_get("autoDetectFormat", "auto_detect_format", True),
+            gpu_acceleration=_get("gpuAcceleration", "gpu_acceleration", False),
             theme=data.get("theme", "system"),
-            max_recent_paths=data.get("maxRecentPaths", 10),
-            recent_paths=data.get("recentPaths", []),
-            max_history_entries=data.get("maxHistoryEntries", 100),
-            warn_box_rotation=data.get("warnBoxRotation", True),
+            max_recent_paths=_get("maxRecentPaths", "max_recent_paths", 10),
+            recent_paths=_get("recentPaths", "recent_paths", []),
+            max_history_entries=_get("maxHistoryEntries", "max_history_entries", 100),
+            warn_box_rotation=_get("warnBoxRotation", "warn_box_rotation", True),
         )
 
 

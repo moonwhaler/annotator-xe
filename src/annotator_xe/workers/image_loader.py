@@ -101,7 +101,7 @@ class ThumbnailLoader(QThread):
         self.thumbnail_size = thumbnail_size
         self.cache = cache or get_thumbnail_cache()
 
-        self._queue: PriorityQueue = PriorityQueue()
+        self._queue: PriorityQueue = PriorityQueue(maxsize=200)
         self._is_running = True
         self._loaded: Set[str] = set()
         self._lock = Lock()
@@ -116,7 +116,11 @@ class ThumbnailLoader(QThread):
         """
         with self._lock:
             if filename not in self._loaded:
-                self._queue.put((priority, filename))
+                try:
+                    self._queue.put_nowait((priority, filename))
+                except Exception:
+                    # Queue is full - drop lowest priority request (backpressure)
+                    pass
 
     def request_thumbnails(self, filenames: List[str], priority: int = 100) -> None:
         """
@@ -129,7 +133,11 @@ class ThumbnailLoader(QThread):
         with self._lock:
             for filename in filenames:
                 if filename not in self._loaded:
-                    self._queue.put((priority, filename))
+                    try:
+                        self._queue.put_nowait((priority, filename))
+                    except Exception:
+                        # Queue is full - skip remaining (backpressure)
+                        break
 
     def clear_queue(self) -> None:
         """Clear all pending thumbnail requests."""
